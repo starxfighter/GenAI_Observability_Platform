@@ -1,0 +1,763 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Processing Infrastructure (Stream Processing, Anomaly Detection, LLM Investigation)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: genai-observability
+
+Resources:
+  #============================================================================
+  # Stream Processor Lambda (Kinesis Consumer)
+  #============================================================================
+  StreamProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-stream-processor'
+      Description: Processes events from Kinesis and routes to storage
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          OPENSEARCH_ENDPOINT:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-OpenSearchEndpoint'
+          TIMESTREAM_DATABASE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-TimestreamDatabaseName'
+          ERROR_STORE_TABLE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ErrorStoreTableName'
+          ANOMALY_DETECTOR_FUNCTION: !Ref AnomalyDetectorFunction
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import base64
+          import boto3
+          from datetime import datetime
+          from opensearchpy import OpenSearch, RequestsHttpConnection
+          from requests_aws4auth import AWS4Auth
+
+          # Initialize clients
+          timestream = boto3.client('timestream-write')
+          dynamodb = boto3.resource('dynamodb')
+          lambda_client = boto3.client('lambda')
+
+          error_table = dynamodb.Table(os.environ['ERROR_STORE_TABLE'])
+          TIMESTREAM_DB = os.environ['TIMESTREAM_DATABASE']
+          OPENSEARCH_ENDPOINT = os.environ['OPENSEARCH_ENDPOINT']
+          ANOMALY_FUNCTION = os.environ['ANOMALY_DETECTOR_FUNCTION']
+
+          # Initialize OpenSearch client
+          region = os.environ.get('AWS_REGION', 'us-east-1')
+          credentials = boto3.Session().get_credentials()
+          awsauth = AWS4Auth(
+              credentials.access_key,
+              credentials.secret_key,
+              region,
+              'aoss',
+              session_token=credentials.token
+          )
+
+          opensearch = OpenSearch(
+              hosts=[{'host': OPENSEARCH_ENDPOINT.replace('https://', ''), 'port': 443}],
+              http_auth=awsauth,
+              use_ssl=True,
+              verify_certs=True,
+              connection_class=RequestsHttpConnection
+          )
+
+          def handler(event, context):
+              records_processed = 0
+              errors_detected = 0
+              metrics_written = 0
+
+              # Process Kinesis records
+              for record in event.get('Records', []):
+                  try:
+                      # Decode Kinesis record
+                      payload = base64.b64decode(record['kinesis']['data'])
+                      event_data = json.loads(payload)
+
+                      event_type = event_data.get('event_type', 'unknown')
+
+                      # Route based on event type
+                      if event_type == 'error':
+                          process_error(event_data)
+                          errors_detected += 1
+                      elif event_type in ['llm_call_end', 'execution_end', 'tool_call_end', 'mcp_call_end']:
+                          write_metrics(event_data)
+                          metrics_written += 1
+
+                      # Write all events to OpenSearch for traces
+                      write_to_opensearch(event_data)
+
+                      records_processed += 1
+
+                  except Exception as e:
+                      print(f"Error processing record: {str(e)}")
+                      continue
+
+              # Trigger anomaly detection if we have errors
+              if errors_detected > 0:
+                  trigger_anomaly_detection(event.get('Records', []))
+
+              return {
+                  'statusCode': 200,
+                  'records_processed': records_processed,
+                  'errors_detected': errors_detected,
+                  'metrics_written': metrics_written
+              }
+
+          def process_error(event_data):
+              """Store error in DynamoDB for investigation."""
+              error_id = f"{event_data.get('agent_id', 'unknown')}-{event_data.get('execution_id', 'unknown')}-{datetime.utcnow().timestamp()}"
+
+              error_table.put_item(
+                  Item={
+                      'error_id': error_id,
+                      'agent_id': event_data.get('agent_id', 'unknown'),
+                      'execution_id': event_data.get('execution_id', ''),
+                      'timestamp': event_data.get('timestamp', datetime.utcnow().isoformat()),
+                      'error_type': event_data.get('error_type', 'unknown'),
+                      'error_message': event_data.get('error_message', ''),
+                      'stack_trace': event_data.get('stack_trace', ''),
+                      'severity': event_data.get('severity', 'error'),
+                      'context': event_data.get('context', {}),
+                      'resolution_status': 'open',
+                      'ttl': int((datetime.utcnow().timestamp()) + (90 * 24 * 60 * 60))  # 90 days
+                  }
+              )
+
+          def write_metrics(event_data):
+              """Write metrics to Timestream."""
+              agent_id = event_data.get('agent_id', 'unknown')
+              event_type = event_data.get('event_type', 'unknown')
+
+              common_dimensions = [
+                  {'Name': 'agent_id', 'Value': agent_id},
+                  {'Name': 'agent_type', 'Value': event_data.get('agent_type', 'unknown')},
+                  {'Name': 'environment', 'Value': event_data.get('environment', 'unknown')},
+              ]
+
+              records = []
+              current_time = str(int(datetime.utcnow().timestamp() * 1000))
+
+              # Duration metric
+              if 'duration_ms' in event_data:
+                  records.append({
+                      'Dimensions': common_dimensions + [{'Name': 'event_type', 'Value': event_type}],
+                      'MeasureName': 'duration_ms',
+                      'MeasureValue': str(event_data['duration_ms']),
+                      'MeasureValueType': 'DOUBLE',
+                      'Time': current_time
+                  })
+
+              # Token metrics for LLM calls
+              if event_type == 'llm_call_end' and event_data.get('token_usage'):
+                  token_usage = event_data['token_usage']
+                  model = event_data.get('model', 'unknown')
+
+                  model_dimensions = common_dimensions + [
+                      {'Name': 'model', 'Value': model},
+                      {'Name': 'provider', 'Value': event_data.get('provider', 'unknown')}
+                  ]
+
+                  if token_usage.get('input_tokens'):
+                      records.append({
+                          'Dimensions': model_dimensions,
+                          'MeasureName': 'input_tokens',
+                          'MeasureValue': str(token_usage['input_tokens']),
+                          'MeasureValueType': 'BIGINT',
+                          'Time': current_time
+                      })
+
+                  if token_usage.get('output_tokens'):
+                      records.append({
+                          'Dimensions': model_dimensions,
+                          'MeasureName': 'output_tokens',
+                          'MeasureValue': str(token_usage['output_tokens']),
+                          'MeasureValueType': 'BIGINT',
+                          'Time': current_time
+                      })
+
+              # Cost metric
+              if 'cost' in event_data and event_data['cost'] > 0:
+                  records.append({
+                      'Dimensions': common_dimensions,
+                      'MeasureName': 'cost_usd',
+                      'MeasureValue': str(event_data['cost']),
+                      'MeasureValueType': 'DOUBLE',
+                      'Time': current_time
+                  })
+
+              # Write to Timestream
+              if records:
+                  try:
+                      timestream.write_records(
+                          DatabaseName=TIMESTREAM_DB,
+                          TableName='latency-metrics',
+                          Records=records
+                      )
+                  except Exception as e:
+                      print(f"Error writing to Timestream: {str(e)}")
+
+          def write_to_opensearch(event_data):
+              """Write event to OpenSearch for tracing."""
+              try:
+                  index_name = f"traces-{datetime.utcnow().strftime('%Y-%m')}"
+
+                  opensearch.index(
+                      index=index_name,
+                      body=event_data
+                  )
+              except Exception as e:
+                  print(f"Error writing to OpenSearch: {str(e)}")
+
+          def trigger_anomaly_detection(records):
+              """Trigger anomaly detection asynchronously."""
+              try:
+                  lambda_client.invoke(
+                      FunctionName=ANOMALY_FUNCTION,
+                      InvocationType='Event',
+                      Payload=json.dumps({'records_count': len(records)})
+                  )
+              except Exception as e:
+                  print(f"Error triggering anomaly detection: {str(e)}")
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  StreamProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${StreamProcessorFunction}'
+      RetentionInDays: 30
+
+  # Kinesis Event Source Mapping
+  StreamProcessorEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-EventsStreamArn'
+      FunctionName: !Ref StreamProcessorFunction
+      StartingPosition: LATEST
+      BatchSize: 100
+      MaximumBatchingWindowInSeconds: 5
+      ParallelizationFactor: 2
+
+  #============================================================================
+  # Anomaly Detector Lambda
+  #============================================================================
+  AnomalyDetectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-anomaly-detector'
+      Description: Detects anomalies in agent behavior
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          TIMESTREAM_DATABASE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-TimestreamDatabaseName'
+          ERROR_STORE_TABLE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ErrorStoreTableName'
+          INVESTIGATION_FUNCTION: !Ref LLMInvestigatorFunction
+          CRITICAL_SNS_TOPIC: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectName}-${Environment}-alerts-critical'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from datetime import datetime, timedelta
+
+          timestream_query = boto3.client('timestream-query')
+          dynamodb = boto3.resource('dynamodb')
+          lambda_client = boto3.client('lambda')
+          sns = boto3.client('sns')
+
+          error_table = dynamodb.Table(os.environ['ERROR_STORE_TABLE'])
+          TIMESTREAM_DB = os.environ['TIMESTREAM_DATABASE']
+          INVESTIGATION_FUNCTION = os.environ['INVESTIGATION_FUNCTION']
+          CRITICAL_TOPIC = os.environ['CRITICAL_SNS_TOPIC']
+
+          # Anomaly thresholds
+          ERROR_RATE_THRESHOLD = 0.1  # 10% error rate
+          LATENCY_THRESHOLD_MS = 5000  # 5 seconds
+          ERROR_COUNT_THRESHOLD = 5  # 5 errors in 5 minutes
+
+          def handler(event, context):
+              anomalies = []
+
+              # Check error rates
+              error_anomalies = check_error_rates()
+              anomalies.extend(error_anomalies)
+
+              # Check latency anomalies
+              latency_anomalies = check_latency_anomalies()
+              anomalies.extend(latency_anomalies)
+
+              # Process detected anomalies
+              for anomaly in anomalies:
+                  # Trigger LLM investigation for critical anomalies
+                  if anomaly['severity'] == 'critical':
+                      trigger_investigation(anomaly)
+
+                  # Send notification
+                  send_notification(anomaly)
+
+              return {
+                  'statusCode': 200,
+                  'anomalies_detected': len(anomalies)
+              }
+
+          def check_error_rates():
+              """Check for high error rates in recent data."""
+              anomalies = []
+
+              # Query recent errors from DynamoDB
+              five_minutes_ago = (datetime.utcnow() - timedelta(minutes=5)).isoformat()
+
+              # Scan for recent errors (in production, use a query with GSI)
+              response = error_table.scan(
+                  FilterExpression='#ts >= :time_threshold',
+                  ExpressionAttributeNames={'#ts': 'timestamp'},
+                  ExpressionAttributeValues={':time_threshold': five_minutes_ago}
+              )
+
+              errors = response.get('Items', [])
+
+              # Group by agent
+              agent_errors = {}
+              for error in errors:
+                  agent_id = error.get('agent_id', 'unknown')
+                  if agent_id not in agent_errors:
+                      agent_errors[agent_id] = []
+                  agent_errors[agent_id].append(error)
+
+              # Check thresholds
+              for agent_id, agent_error_list in agent_errors.items():
+                  if len(agent_error_list) >= ERROR_COUNT_THRESHOLD:
+                      anomalies.append({
+                          'anomaly_type': 'high_error_rate',
+                          'agent_id': agent_id,
+                          'severity': 'critical',
+                          'timestamp': datetime.utcnow().isoformat() + 'Z',
+                          'metrics': {
+                              'error_count': len(agent_error_list),
+                              'threshold': ERROR_COUNT_THRESHOLD,
+                              'window_minutes': 5
+                          },
+                          'recent_errors': agent_error_list[:5]  # Include up to 5 recent errors
+                      })
+
+              return anomalies
+
+          def check_latency_anomalies():
+              """Check for latency anomalies using Timestream."""
+              anomalies = []
+
+              query = f"""
+              SELECT agent_id, AVG(measure_value::double) as avg_latency, MAX(measure_value::double) as max_latency
+              FROM "{TIMESTREAM_DB}"."latency-metrics"
+              WHERE measure_name = 'duration_ms'
+                  AND time >= ago(5m)
+              GROUP BY agent_id
+              HAVING AVG(measure_value::double) > {LATENCY_THRESHOLD_MS}
+              """
+
+              try:
+                  response = timestream_query.query(QueryString=query)
+
+                  for row in response.get('Rows', []):
+                      agent_id = row['Data'][0].get('ScalarValue', 'unknown')
+                      avg_latency = float(row['Data'][1].get('ScalarValue', 0))
+                      max_latency = float(row['Data'][2].get('ScalarValue', 0))
+
+                      anomalies.append({
+                          'anomaly_type': 'high_latency',
+                          'agent_id': agent_id,
+                          'severity': 'warning' if avg_latency < LATENCY_THRESHOLD_MS * 2 else 'critical',
+                          'timestamp': datetime.utcnow().isoformat() + 'Z',
+                          'metrics': {
+                              'avg_latency_ms': avg_latency,
+                              'max_latency_ms': max_latency,
+                              'threshold_ms': LATENCY_THRESHOLD_MS
+                          }
+                      })
+
+              except Exception as e:
+                  print(f"Error querying Timestream: {str(e)}")
+
+              return anomalies
+
+          def trigger_investigation(anomaly):
+              """Trigger LLM investigation for the anomaly."""
+              try:
+                  lambda_client.invoke(
+                      FunctionName=INVESTIGATION_FUNCTION,
+                      InvocationType='Event',
+                      Payload=json.dumps(anomaly)
+                  )
+              except Exception as e:
+                  print(f"Error triggering investigation: {str(e)}")
+
+          def send_notification(anomaly):
+              """Send notification about the anomaly."""
+              try:
+                  sns.publish(
+                      TopicArn=CRITICAL_TOPIC,
+                      Subject=f"[{anomaly['severity'].upper()}] {anomaly['anomaly_type']} - {anomaly['agent_id']}",
+                      Message=json.dumps(anomaly, indent=2),
+                      MessageAttributes={
+                          'severity': {
+                              'DataType': 'String',
+                              'StringValue': anomaly['severity']
+                          },
+                          'agent_id': {
+                              'DataType': 'String',
+                              'StringValue': anomaly['agent_id']
+                          }
+                      }
+                  )
+              except Exception as e:
+                  print(f"Error sending notification: {str(e)}")
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  AnomalyDetectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AnomalyDetectorFunction}'
+      RetentionInDays: 30
+
+  # Scheduled rule to run anomaly detection every 5 minutes
+  AnomalyDetectorSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-anomaly-detector-schedule'
+      Description: Run anomaly detection every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: AnomalyDetectorTarget
+          Arn: !GetAtt AnomalyDetectorFunction.Arn
+
+  AnomalyDetectorSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AnomalyDetectorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AnomalyDetectorSchedule.Arn
+
+  #============================================================================
+  # LLM Investigator Lambda
+  #============================================================================
+  LLMInvestigatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-llm-investigator'
+      Description: Uses Claude to investigate anomalies
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          ANTHROPIC_SECRET_ARN:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AnthropicApiKeySecretArn'
+          OPENSEARCH_ENDPOINT:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-OpenSearchEndpoint'
+          TIMESTREAM_DATABASE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-TimestreamDatabaseName'
+          ERROR_STORE_TABLE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-ErrorStoreTableName'
+          INVESTIGATION_RESULTS_TABLE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-InvestigationResultsTableName'
+          NOTIFICATION_TOPIC: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectName}-${Environment}-investigation-results'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import uuid
+          from datetime import datetime, timedelta
+
+          secrets = boto3.client('secretsmanager')
+          dynamodb = boto3.resource('dynamodb')
+          sns = boto3.client('sns')
+          timestream_query = boto3.client('timestream-query')
+
+          error_table = dynamodb.Table(os.environ['ERROR_STORE_TABLE'])
+          results_table = dynamodb.Table(os.environ['INVESTIGATION_RESULTS_TABLE'])
+          TIMESTREAM_DB = os.environ['TIMESTREAM_DATABASE']
+          NOTIFICATION_TOPIC = os.environ['NOTIFICATION_TOPIC']
+
+          def get_anthropic_client():
+              """Get Anthropic client with API key from Secrets Manager."""
+              secret_response = secrets.get_secret_value(
+                  SecretId=os.environ['ANTHROPIC_SECRET_ARN']
+              )
+              api_key = json.loads(secret_response['SecretString'])['api_key']
+
+              from anthropic import Anthropic
+              return Anthropic(api_key=api_key)
+
+          def handler(event, context):
+              investigation_id = str(uuid.uuid4())
+              agent_id = event.get('agent_id', 'unknown')
+              anomaly_type = event.get('anomaly_type', 'unknown')
+
+              try:
+                  # Gather context
+                  context_data = gather_investigation_context(event)
+
+                  # Find similar past incidents
+                  similar_incidents = find_similar_incidents(agent_id, anomaly_type)
+
+                  # Build prompt and call Claude
+                  analysis = call_claude_for_analysis(event, context_data, similar_incidents)
+
+                  # Store results
+                  store_investigation_results(investigation_id, event, analysis)
+
+                  # Send notification with investigation results
+                  send_investigation_notification(event, analysis)
+
+                  return {
+                      'statusCode': 200,
+                      'investigation_id': investigation_id,
+                      'analysis': analysis
+                  }
+
+              except Exception as e:
+                  print(f"Investigation failed: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'error': str(e)
+                  }
+
+          def gather_investigation_context(event):
+              """Gather relevant context for investigation."""
+              agent_id = event.get('agent_id', 'unknown')
+              context = {
+                  'event': event,
+                  'recent_errors': [],
+                  'metrics': {}
+              }
+
+              # Get recent errors
+              try:
+                  one_hour_ago = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+                  response = error_table.query(
+                      IndexName='agent-timestamp-index',
+                      KeyConditionExpression='agent_id = :agent_id AND #ts >= :time',
+                      ExpressionAttributeNames={'#ts': 'timestamp'},
+                      ExpressionAttributeValues={
+                          ':agent_id': agent_id,
+                          ':time': one_hour_ago
+                      },
+                      Limit=10,
+                      ScanIndexForward=False
+                  )
+                  context['recent_errors'] = response.get('Items', [])
+              except Exception as e:
+                  print(f"Error fetching recent errors: {str(e)}")
+
+              # Get recent metrics
+              try:
+                  query = f"""
+                  SELECT measure_name, AVG(measure_value::double) as avg_value
+                  FROM "{TIMESTREAM_DB}"."latency-metrics"
+                  WHERE agent_id = '{agent_id}'
+                      AND time >= ago(1h)
+                  GROUP BY measure_name
+                  """
+                  response = timestream_query.query(QueryString=query)
+                  for row in response.get('Rows', []):
+                      measure = row['Data'][0].get('ScalarValue', 'unknown')
+                      value = float(row['Data'][1].get('ScalarValue', 0))
+                      context['metrics'][measure] = value
+              except Exception as e:
+                  print(f"Error fetching metrics: {str(e)}")
+
+              return context
+
+          def find_similar_incidents(agent_id, anomaly_type):
+              """Find similar past incidents."""
+              try:
+                  response = results_table.query(
+                      IndexName='agent-timestamp-index',
+                      KeyConditionExpression='agent_id = :agent_id',
+                      FilterExpression='anomaly_type = :anomaly_type AND resolution_status = :resolved',
+                      ExpressionAttributeValues={
+                          ':agent_id': agent_id,
+                          ':anomaly_type': anomaly_type,
+                          ':resolved': 'resolved'
+                      },
+                      Limit=5,
+                      ScanIndexForward=False
+                  )
+                  return response.get('Items', [])
+              except Exception as e:
+                  print(f"Error finding similar incidents: {str(e)}")
+                  return []
+
+          def call_claude_for_analysis(event, context, similar_incidents):
+              """Call Claude API for incident analysis."""
+              client = get_anthropic_client()
+
+              prompt = f"""You are an expert DevOps engineer investigating a production incident in a GenAI observability system.
+
+          ## Incident Details
+          - **Agent ID**: {event.get('agent_id')}
+          - **Anomaly Type**: {event.get('anomaly_type')}
+          - **Severity**: {event.get('severity')}
+          - **Timestamp**: {event.get('timestamp')}
+
+          ## Metrics
+          {json.dumps(event.get('metrics', {}), indent=2)}
+
+          ## Recent Errors
+          {json.dumps(context.get('recent_errors', [])[:5], indent=2, default=str)}
+
+          ## Recent Performance Metrics
+          {json.dumps(context.get('metrics', {}), indent=2)}
+
+          ## Similar Past Incidents ({len(similar_incidents)} found)
+          {format_similar_incidents(similar_incidents)}
+
+          ## Your Task
+          Please analyze this incident and provide:
+          1. **Root Cause Analysis**: What is the most likely root cause?
+          2. **Evidence**: What evidence supports your conclusion?
+          3. **Impact Assessment**: How severe is this issue?
+          4. **Remediation Steps**: Provide 3-5 concrete steps to resolve this
+          5. **Prevention**: What can prevent this from happening again?
+          """
+
+              message = client.messages.create(
+                  model="claude-sonnet-4-20250514",
+                  max_tokens=4000,
+                  temperature=0.3,
+                  messages=[{"role": "user", "content": prompt}]
+              )
+
+              return {
+                  'raw_analysis': message.content[0].text,
+                  'timestamp': datetime.utcnow().isoformat(),
+                  'model': 'claude-sonnet-4-20250514',
+                  'token_usage': {
+                      'input': message.usage.input_tokens,
+                      'output': message.usage.output_tokens
+                  }
+              }
+
+          def format_similar_incidents(incidents):
+              if not incidents:
+                  return "No similar incidents found."
+
+              formatted = []
+              for i, incident in enumerate(incidents, 1):
+                  formatted.append(f"""
+          ### Similar Incident #{i}
+          - **Root Cause**: {incident.get('root_cause', 'Unknown')}
+          - **Resolution**: {incident.get('resolution', 'Unknown')}
+          - **Resolved**: {incident.get('resolved_at', 'Unknown')}
+          """)
+              return '\n'.join(formatted)
+
+          def store_investigation_results(investigation_id, event, analysis):
+              """Store investigation results in DynamoDB."""
+              results_table.put_item(
+                  Item={
+                      'investigation_id': investigation_id,
+                      'agent_id': event.get('agent_id', 'unknown'),
+                      'anomaly_type': event.get('anomaly_type', 'unknown'),
+                      'severity': event.get('severity', 'unknown'),
+                      'timestamp': datetime.utcnow().isoformat() + 'Z',
+                      'llm_analysis': analysis['raw_analysis'],
+                      'model_used': analysis['model'],
+                      'token_usage': analysis['token_usage'],
+                      'resolution_status': 'open',
+                      'ttl': int(datetime.utcnow().timestamp() + (90 * 24 * 60 * 60))
+                  }
+              )
+
+          def send_investigation_notification(event, analysis):
+              """Send notification with investigation results."""
+              message = {
+                  'notification_type': 'incident_investigation',
+                  'incident': {
+                      'agent_id': event.get('agent_id'),
+                      'anomaly_type': event.get('anomaly_type'),
+                      'severity': event.get('severity'),
+                      'timestamp': event.get('timestamp')
+                  },
+                  'investigation': {
+                      'summary': analysis['raw_analysis'][:500] + '...',
+                      'full_analysis': analysis['raw_analysis']
+                  }
+              }
+
+              sns.publish(
+                  TopicArn=NOTIFICATION_TOPIC,
+                  Subject=f"Investigation Complete: {event.get('agent_id')}",
+                  Message=json.dumps(message, indent=2),
+                  MessageAttributes={
+                      'severity': {
+                          'DataType': 'String',
+                          'StringValue': event.get('severity', 'unknown')
+                      },
+                      'has_investigation': {
+                          'DataType': 'String',
+                          'StringValue': 'true'
+                      }
+                  }
+              )
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  LLMInvestigatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LLMInvestigatorFunction}'
+      RetentionInDays: 30
+
+Outputs:
+  StreamProcessorFunctionArn:
+    Description: Stream Processor Lambda ARN
+    Value: !GetAtt StreamProcessorFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-StreamProcessorFunctionArn'
+
+  AnomalyDetectorFunctionArn:
+    Description: Anomaly Detector Lambda ARN
+    Value: !GetAtt AnomalyDetectorFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AnomalyDetectorFunctionArn'
+
+  LLMInvestigatorFunctionArn:
+    Description: LLM Investigator Lambda ARN
+    Value: !GetAtt LLMInvestigatorFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-LLMInvestigatorFunctionArn'

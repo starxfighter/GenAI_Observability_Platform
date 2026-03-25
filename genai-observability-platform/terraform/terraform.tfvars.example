@@ -1,0 +1,229 @@
+# GenAI Observability Platform - Terraform Variables Example
+# Copy this file to terraform.tfvars and fill in your values
+
+# =============================================================================
+# GENERAL
+# =============================================================================
+
+environment         = "dev"  # dev, staging, or prod
+aws_region          = "us-east-1"
+secondary_region    = "us-west-2"
+enable_multi_region = false
+
+# =============================================================================
+# VPC AND NETWORKING
+# =============================================================================
+
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+enable_nat_gateway = true
+single_nat_gateway = true  # Set to false for HA in production
+
+# =============================================================================
+# TIMESTREAM
+# =============================================================================
+
+timestream_memory_retention_hours  = 24
+timestream_magnetic_retention_days = 365
+
+# =============================================================================
+# OPENSEARCH
+# =============================================================================
+
+opensearch_instance_type  = "t3.medium.search"  # Use r6g for production
+opensearch_instance_count = 2
+opensearch_volume_size    = 100
+opensearch_master_user    = "admin"
+opensearch_master_password = "CHANGE_ME_StrongPassword123!"  # Use a strong password
+
+# =============================================================================
+# RDS AURORA
+# =============================================================================
+
+rds_instance_class  = "db.t3.medium"  # Use db.r6g for production
+rds_instance_count  = 2
+rds_database_name   = "observability"
+rds_master_username = "dbadmin"
+rds_master_password = "CHANGE_ME_StrongPassword123!"  # Use a strong password
+
+# =============================================================================
+# S3
+# =============================================================================
+
+s3_archive_after_days = 90
+s3_expire_after_days  = 365
+
+# =============================================================================
+# KINESIS
+# =============================================================================
+
+kinesis_shard_count     = 2  # Set to 0 for on-demand
+kinesis_retention_hours = 24
+
+# =============================================================================
+# LAMBDA
+# =============================================================================
+
+lambda_log_retention_days = 14  # 30 for production
+
+# =============================================================================
+# API GATEWAY
+# =============================================================================
+
+# Uncomment and set for custom domain
+# api_domain_name     = "api.observability.example.com"
+# api_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/abc123"
+
+api_throttle_rate_limit  = 1000
+api_throttle_burst_limit = 2000
+
+# =============================================================================
+# COGNITO
+# =============================================================================
+
+cognito_callback_urls = [
+  "http://localhost:3000/callback",
+  "https://observability.example.com/callback"
+]
+
+cognito_logout_urls = [
+  "http://localhost:3000",
+  "https://observability.example.com"
+]
+
+# =============================================================================
+# SSO - GOOGLE (Optional)
+# =============================================================================
+
+enable_google_sso    = false
+google_client_id     = ""
+google_client_secret = ""
+
+# =============================================================================
+# SSO - OKTA (Optional)
+# =============================================================================
+
+enable_okta_sso    = false
+okta_client_id     = ""
+okta_client_secret = ""
+okta_issuer_url    = ""  # e.g., https://your-org.okta.com
+
+# =============================================================================
+# SSO - SAML (Optional)
+# =============================================================================
+
+enable_saml_sso    = false
+saml_metadata_url  = ""
+saml_provider_name = "Enterprise"
+
+# =============================================================================
+# SECRETS
+# =============================================================================
+
+anthropic_api_key        = "sk-ant-XXXXXXXXXXXXXXXXXXXXXXXX"  # Required
+slack_webhook_url        = ""  # Optional
+pagerduty_integration_key = ""  # Optional
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+alert_email                 = "alerts@example.com"
+lambda_error_threshold      = 10
+api_latency_threshold_ms    = 1000
+dynamodb_throttle_threshold = 5
+
+# =============================================================================
+# PORTAL (FastAPI Backend + React Frontend)
+# =============================================================================
+
+# ECS Configuration
+portal_api_cpu           = 512   # 1024 for production
+portal_api_memory        = 1024  # 2048 for production
+portal_api_desired_count = 2
+portal_api_min_count     = 1     # 2 for production
+portal_api_max_count     = 10
+
+# Custom Domains (Optional)
+# portal_api_domain      = "api.observability.example.com"
+# portal_frontend_domain = "observability.example.com"
+
+# Certificates (Required if using custom domains)
+# portal_certificate_arn          = "arn:aws:acm:us-east-1:123456789012:certificate/abc123"  # Same region as deployment
+# portal_frontend_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/def456"  # Must be us-east-1 for CloudFront
+
+# Route53 (Optional - for automatic DNS records)
+# route53_zone_id = "Z1234567890ABC"
+
+# CORS Origins
+cors_origins = [
+  "http://localhost:3000",
+  "https://observability.example.com"
+]
+
+# =============================================================================
+# WAF (Web Application Firewall)
+# =============================================================================
+
+waf_rate_limit     = 2000   # Requests per 5 minutes per IP
+waf_api_rate_limit = 10000  # Higher limit for API calls
+
+# Geo-blocking (uncomment to block specific countries)
+# waf_blocked_countries = ["CN", "RU", "KP"]
+
+# =============================================================================
+# AWS BACKUP
+# =============================================================================
+
+backup_daily_retention_days   = 7    # Keep daily backups for 7 days
+backup_weekly_retention_days  = 30   # Keep weekly backups for 30 days
+backup_monthly_retention_days = 365  # Keep monthly backups for 1 year
+
+# Enable vault lock for compliance (prevents backup deletion)
+enable_backup_vault_lock = false  # Set to true for production compliance
+
+# =============================================================================
+# EVENTBRIDGE
+# =============================================================================
+
+eventbridge_archive_retention_days = 30  # Keep event archive for 30 days
+
+# =============================================================================
+# ELASTICACHE (REDIS)
+# =============================================================================
+
+elasticache_node_type  = "cache.t3.micro"  # Use cache.r6g for production
+elasticache_num_nodes  = 1                  # Use 2+ for production HA
+elasticache_auth_token = "CHANGE_ME_StrongRedisPassword123!"  # Required for AUTH
+
+# =============================================================================
+# BASTION HOST
+# =============================================================================
+
+enable_bastion = false  # Set to true to enable bastion host
+
+# Allowed CIDR blocks for SSH access (only used if bastion enabled)
+# bastion_allowed_cidr_blocks = ["1.2.3.4/32"]  # Your IP address
+
+# SSH key (optional - SSM Session Manager is preferred)
+# bastion_ssh_public_key = "ssh-rsa AAAA... your-key"
+
+bastion_instance_type = "t3.micro"
+
+# =============================================================================
+# CI/CD PIPELINE
+# =============================================================================
+
+enable_cicd = false  # Set to true to enable CI/CD pipeline
+
+# Required if enable_cicd = true:
+# codestar_connection_arn = "arn:aws:codestar-connections:us-east-1:123456789012:connection/abc123"
+# github_repository       = "your-org/genai-observability-platform"
+# github_branch           = "main"
+
+# =============================================================================
+# VPC FLOW LOGS
+# =============================================================================
+
+enable_flow_logs         = true  # Enable VPC Flow Logs
+flow_logs_retention_days = 14    # Keep logs for 14 days (30 for production)

@@ -1,0 +1,718 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Notification Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: genai-observability
+
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Email address for alert notifications (optional)
+
+  TeamsWebhookUrl:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Microsoft Teams webhook URL (optional)
+
+  SenderEmail:
+    Type: String
+    Default: ''
+    Description: SES verified sender email for notifications (optional)
+
+  DashboardUrl:
+    Type: String
+    Default: 'https://observability.example.com'
+    Description: Dashboard URL for alert links
+
+Resources:
+  #============================================================================
+  # SNS Topics
+  #============================================================================
+  CriticalAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts-critical'
+      DisplayName: GenAI Critical Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  WarningAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts-warning'
+      DisplayName: GenAI Warning Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  InfoAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-alerts-info'
+      DisplayName: GenAI Info Alerts
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  InvestigationResultsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-investigation-results'
+      DisplayName: GenAI Investigation Results
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Email subscription (conditional)
+  CriticalAlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  #============================================================================
+  # Slack Formatter Lambda
+  #============================================================================
+  SlackFormatterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-slack-formatter'
+      Description: Formats alerts for Slack
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          SLACK_SECRET_ARN:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-SlackWebhookSecretArn'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import urllib.request
+          from datetime import datetime
+
+          secrets = boto3.client('secretsmanager')
+
+          def get_slack_webhook():
+              secret_response = secrets.get_secret_value(
+                  SecretId=os.environ['SLACK_SECRET_ARN']
+              )
+              return json.loads(secret_response['SecretString'])['webhook_url']
+
+          def handler(event, context):
+              for record in event.get('Records', []):
+                  try:
+                      sns_message = record['Sns']
+                      message_data = json.loads(sns_message['Message'])
+                      severity = sns_message.get('MessageAttributes', {}).get('severity', {}).get('Value', 'info')
+
+                      # Build Slack message
+                      blocks = build_slack_blocks(message_data, severity)
+
+                      # Send to Slack
+                      send_to_slack(blocks, severity)
+
+                  except Exception as e:
+                      print(f"Error processing record: {str(e)}")
+
+              return {'statusCode': 200}
+
+          def build_slack_blocks(message, severity):
+              emoji_map = {
+                  'critical': ':rotating_light:',
+                  'warning': ':warning:',
+                  'info': ':information_source:'
+              }
+
+              incident = message.get('incident', {})
+              investigation = message.get('investigation', {})
+
+              blocks = [
+                  {
+                      'type': 'header',
+                      'text': {
+                          'type': 'plain_text',
+                          'text': f"{emoji_map.get(severity, ':bell:')} {severity.upper()}: {incident.get('anomaly_type', 'Alert')}",
+                          'emoji': True
+                      }
+                  },
+                  {
+                      'type': 'section',
+                      'fields': [
+                          {
+                              'type': 'mrkdwn',
+                              'text': f"*Agent:*\n{incident.get('agent_id', 'unknown')}"
+                          },
+                          {
+                              'type': 'mrkdwn',
+                              'text': f"*Time:*\n{incident.get('timestamp', 'unknown')}"
+                          }
+                      ]
+                  }
+              ]
+
+              # Add investigation summary if available
+              if investigation:
+                  blocks.append({'type': 'divider'})
+                  blocks.append({
+                      'type': 'section',
+                      'text': {
+                          'type': 'mrkdwn',
+                          'text': f"*AI Investigation Summary*\n{investigation.get('summary', 'No summary available')}"
+                      }
+                  })
+
+              return blocks
+
+          def send_to_slack(blocks, severity):
+              webhook_url = get_slack_webhook()
+
+              if webhook_url == 'PLACEHOLDER_REPLACE_ME':
+                  print("Slack webhook not configured, skipping notification")
+                  return
+
+              color_map = {
+                  'critical': '#FF0000',
+                  'warning': '#FFA500',
+                  'info': '#0000FF'
+              }
+
+              payload = {
+                  'username': 'GenAI Observability',
+                  'icon_emoji': ':robot_face:',
+                  'attachments': [{
+                      'color': color_map.get(severity, '#808080'),
+                      'blocks': blocks
+                  }]
+              }
+
+              req = urllib.request.Request(
+                  webhook_url,
+                  data=json.dumps(payload).encode('utf-8'),
+                  headers={'Content-Type': 'application/json'}
+              )
+
+              try:
+                  urllib.request.urlopen(req)
+              except Exception as e:
+                  print(f"Error sending to Slack: {str(e)}")
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  SlackFormatterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${SlackFormatterFunction}'
+      RetentionInDays: 30
+
+  # SNS Subscription for Slack
+  SlackCriticalSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt SlackFormatterFunction.Arn
+
+  SlackWarningSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref WarningAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt SlackFormatterFunction.Arn
+
+  SlackInvestigationSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref InvestigationResultsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt SlackFormatterFunction.Arn
+
+  SlackFormatterInvokePermissionCritical:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SlackFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref CriticalAlertsTopic
+
+  SlackFormatterInvokePermissionWarning:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SlackFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref WarningAlertsTopic
+
+  SlackFormatterInvokePermissionInvestigation:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SlackFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref InvestigationResultsTopic
+
+  #============================================================================
+  # PagerDuty Formatter Lambda
+  #============================================================================
+  PagerDutyFormatterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-pagerduty-formatter'
+      Description: Formats alerts for PagerDuty
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          PAGERDUTY_SECRET_ARN:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-PagerDutyKeySecretArn'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import urllib.request
+
+          secrets = boto3.client('secretsmanager')
+
+          PAGERDUTY_API_URL = 'https://events.pagerduty.com/v2/enqueue'
+
+          def get_pagerduty_key():
+              secret_response = secrets.get_secret_value(
+                  SecretId=os.environ['PAGERDUTY_SECRET_ARN']
+              )
+              return json.loads(secret_response['SecretString'])['integration_key']
+
+          def handler(event, context):
+              for record in event.get('Records', []):
+                  try:
+                      sns_message = record['Sns']
+                      message_data = json.loads(sns_message['Message'])
+                      severity = sns_message.get('MessageAttributes', {}).get('severity', {}).get('Value', 'info')
+
+                      # Only create PagerDuty incidents for critical and warning
+                      if severity not in ['critical', 'warning']:
+                          continue
+
+                      # Build and send PagerDuty event
+                      send_to_pagerduty(message_data, severity)
+
+                  except Exception as e:
+                      print(f"Error processing record: {str(e)}")
+
+              return {'statusCode': 200}
+
+          def send_to_pagerduty(message, severity):
+              integration_key = get_pagerduty_key()
+
+              if integration_key == 'PLACEHOLDER_REPLACE_ME':
+                  print("PagerDuty key not configured, skipping notification")
+                  return
+
+              incident = message.get('incident', {})
+              investigation = message.get('investigation', {})
+
+              # Map severity
+              pd_severity = {
+                  'critical': 'critical',
+                  'warning': 'warning'
+              }.get(severity, 'info')
+
+              event = {
+                  'routing_key': integration_key,
+                  'event_action': 'trigger',
+                  'dedup_key': f"{incident.get('agent_id', 'unknown')}-{incident.get('anomaly_type', 'unknown')}",
+                  'payload': {
+                      'summary': f"{severity.upper()}: {incident.get('anomaly_type', 'Alert')} - {incident.get('agent_id', 'unknown')}",
+                      'source': 'GenAI Observability Platform',
+                      'severity': pd_severity,
+                      'timestamp': incident.get('timestamp'),
+                      'custom_details': {
+                          'agent_id': incident.get('agent_id'),
+                          'anomaly_type': incident.get('anomaly_type'),
+                          'investigation_summary': investigation.get('summary', 'Under investigation')
+                      }
+                  }
+              }
+
+              req = urllib.request.Request(
+                  PAGERDUTY_API_URL,
+                  data=json.dumps(event).encode('utf-8'),
+                  headers={'Content-Type': 'application/json'}
+              )
+
+              try:
+                  response = urllib.request.urlopen(req)
+                  print(f"PagerDuty response: {response.status}")
+              except Exception as e:
+                  print(f"Error sending to PagerDuty: {str(e)}")
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  PagerDutyFormatterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${PagerDutyFormatterFunction}'
+      RetentionInDays: 30
+
+  # SNS Subscription for PagerDuty (critical only)
+  PagerDutyCriticalSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt PagerDutyFormatterFunction.Arn
+
+  PagerDutyFormatterInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PagerDutyFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref CriticalAlertsTopic
+
+  #============================================================================
+  # Alert Deduplication Lambda
+  #============================================================================
+  AlertDeduplicatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-alert-deduplicator'
+      Description: Deduplicates alerts to prevent alert fatigue
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          ALERT_CACHE_TABLE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AlertCacheTableName'
+          CRITICAL_TOPIC_ARN: !Ref CriticalAlertsTopic
+          WARNING_TOPIC_ARN: !Ref WarningAlertsTopic
+          INFO_TOPIC_ARN: !Ref InfoAlertsTopic
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import hashlib
+          import boto3
+          from datetime import datetime, timedelta
+
+          dynamodb = boto3.resource('dynamodb')
+          sns = boto3.client('sns')
+
+          alert_cache = dynamodb.Table(os.environ['ALERT_CACHE_TABLE'])
+
+          TOPIC_MAP = {
+              'critical': os.environ['CRITICAL_TOPIC_ARN'],
+              'warning': os.environ['WARNING_TOPIC_ARN'],
+              'info': os.environ['INFO_TOPIC_ARN']
+          }
+
+          DEDUP_WINDOW_HOURS = 24
+
+          def handler(event, context):
+              """
+              Process incoming alerts and deduplicate before forwarding.
+              """
+              alert_data = event.get('alert', {})
+              severity = alert_data.get('severity', 'info')
+
+              # Generate fingerprint
+              fingerprint = generate_fingerprint(alert_data)
+
+              # Check if we should send this alert
+              if should_send_alert(fingerprint):
+                  # Forward to appropriate SNS topic
+                  topic_arn = TOPIC_MAP.get(severity, TOPIC_MAP['info'])
+
+                  sns.publish(
+                      TopicArn=topic_arn,
+                      Subject=f"[{severity.upper()}] {alert_data.get('anomaly_type', 'Alert')}",
+                      Message=json.dumps(alert_data),
+                      MessageAttributes={
+                          'severity': {
+                              'DataType': 'String',
+                              'StringValue': severity
+                          },
+                          'agent_id': {
+                              'DataType': 'String',
+                              'StringValue': alert_data.get('agent_id', 'unknown')
+                          }
+                      }
+                  )
+
+                  return {
+                      'statusCode': 200,
+                      'sent': True,
+                      'fingerprint': fingerprint
+                  }
+              else:
+                  return {
+                      'statusCode': 200,
+                      'sent': False,
+                      'reason': 'duplicate_alert',
+                      'fingerprint': fingerprint
+                  }
+
+          def generate_fingerprint(alert_data):
+              """Generate unique fingerprint for the alert."""
+              components = [
+                  alert_data.get('agent_id', ''),
+                  alert_data.get('anomaly_type', ''),
+                  str(alert_data.get('metrics', {}))[:100]
+              ]
+              fingerprint_str = '|'.join(components)
+              return hashlib.sha256(fingerprint_str.encode()).hexdigest()
+
+          def should_send_alert(fingerprint):
+              """Check if alert should be sent or if it's a duplicate."""
+              try:
+                  response = alert_cache.get_item(
+                      Key={'alert_fingerprint': fingerprint}
+                  )
+
+                  if 'Item' in response:
+                      last_sent = datetime.fromisoformat(response['Item']['last_sent'])
+                      if datetime.utcnow() - last_sent < timedelta(hours=DEDUP_WINDOW_HOURS):
+                          # Update count
+                          alert_cache.update_item(
+                              Key={'alert_fingerprint': fingerprint},
+                              UpdateExpression='SET #count = #count + :inc',
+                              ExpressionAttributeNames={'#count': 'count'},
+                              ExpressionAttributeValues={':inc': 1}
+                          )
+                          return False
+
+                  # Cache the alert
+                  alert_cache.put_item(
+                      Item={
+                          'alert_fingerprint': fingerprint,
+                          'last_sent': datetime.utcnow().isoformat(),
+                          'count': 1,
+                          'ttl': int((datetime.utcnow() + timedelta(days=7)).timestamp())
+                      }
+                  )
+                  return True
+
+              except Exception as e:
+                  print(f"Error checking alert cache: {str(e)}")
+                  return True  # Send alert if cache check fails
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  AlertDeduplicatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AlertDeduplicatorFunction}'
+      RetentionInDays: 30
+
+  #============================================================================
+  # Microsoft Teams Formatter Lambda
+  #============================================================================
+  TeamsFormatterFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasTeamsWebhook
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-teams-formatter'
+      Description: Formats alerts for Microsoft Teams
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          TEAMS_WEBHOOK_URL: !Ref TeamsWebhookUrl
+          ENVIRONMENT: !Ref Environment
+          DASHBOARD_URL: !Ref DashboardUrl
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaCodeBucket'
+        S3Key: lambda/teams_formatter.zip
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  TeamsFormatterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: HasTeamsWebhook
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${TeamsFormatterFunction}'
+      RetentionInDays: 30
+
+  TeamsSubscriptionCritical:
+    Type: AWS::SNS::Subscription
+    Condition: HasTeamsWebhook
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt TeamsFormatterFunction.Arn
+
+  TeamsSubscriptionWarning:
+    Type: AWS::SNS::Subscription
+    Condition: HasTeamsWebhook
+    Properties:
+      TopicArn: !Ref WarningAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt TeamsFormatterFunction.Arn
+
+  TeamsFormatterInvokePermissionCritical:
+    Type: AWS::Lambda::Permission
+    Condition: HasTeamsWebhook
+    Properties:
+      FunctionName: !Ref TeamsFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref CriticalAlertsTopic
+
+  TeamsFormatterInvokePermissionWarning:
+    Type: AWS::Lambda::Permission
+    Condition: HasTeamsWebhook
+    Properties:
+      FunctionName: !Ref TeamsFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref WarningAlertsTopic
+
+  #============================================================================
+  # Email/SES Formatter Lambda
+  #============================================================================
+  EmailFormatterFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasSenderEmail
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-email-formatter'
+      Description: Formats alerts for email via SES
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          SENDER_EMAIL: !Ref SenderEmail
+          ENVIRONMENT: !Ref Environment
+          DASHBOARD_URL: !Ref DashboardUrl
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaCodeBucket'
+        S3Key: lambda/email_formatter.zip
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  EmailFormatterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: HasSenderEmail
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${EmailFormatterFunction}'
+      RetentionInDays: 30
+
+  EmailSubscriptionCritical:
+    Type: AWS::SNS::Subscription
+    Condition: HasSenderEmail
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt EmailFormatterFunction.Arn
+
+  EmailFormatterInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasSenderEmail
+    Properties:
+      FunctionName: !Ref EmailFormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref CriticalAlertsTopic
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+  HasTeamsWebhook: !Not [!Equals [!Ref TeamsWebhookUrl, '']]
+  HasSenderEmail: !Not [!Equals [!Ref SenderEmail, '']]
+
+Outputs:
+  CriticalAlertsTopicArn:
+    Description: Critical alerts SNS topic ARN
+    Value: !Ref CriticalAlertsTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-CriticalAlertsTopicArn'
+
+  WarningAlertsTopicArn:
+    Description: Warning alerts SNS topic ARN
+    Value: !Ref WarningAlertsTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-WarningAlertsTopicArn'
+
+  InfoAlertsTopicArn:
+    Description: Info alerts SNS topic ARN
+    Value: !Ref InfoAlertsTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-InfoAlertsTopicArn'
+
+  InvestigationResultsTopicArn:
+    Description: Investigation results SNS topic ARN
+    Value: !Ref InvestigationResultsTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-InvestigationResultsTopicArn'
+
+  SlackFormatterFunctionArn:
+    Description: Slack formatter Lambda ARN
+    Value: !GetAtt SlackFormatterFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-SlackFormatterFunctionArn'
+
+  PagerDutyFormatterFunctionArn:
+    Description: PagerDuty formatter Lambda ARN
+    Value: !GetAtt PagerDutyFormatterFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-PagerDutyFormatterFunctionArn'
+
+  AlertDeduplicatorFunctionArn:
+    Description: Alert deduplicator Lambda ARN
+    Value: !GetAtt AlertDeduplicatorFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertDeduplicatorFunctionArn'
+
+  TeamsFormatterFunctionArn:
+    Condition: HasTeamsWebhook
+    Description: Microsoft Teams formatter Lambda ARN
+    Value: !GetAtt TeamsFormatterFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-TeamsFormatterFunctionArn'
+
+  EmailFormatterFunctionArn:
+    Condition: HasSenderEmail
+    Description: Email formatter Lambda ARN
+    Value: !GetAtt EmailFormatterFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-EmailFormatterFunctionArn'

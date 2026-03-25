@@ -1,0 +1,268 @@
+# GenAI Observability Platform - Local Development
+# Usage: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # ============================================================
+  # Database Services
+  # ============================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: genai-obs-postgres
+    environment:
+      POSTGRES_DB: genai_observability
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - genai-obs-network
+
+  # ============================================================
+  # Cache & Queue Services
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: genai-obs-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - genai-obs-network
+
+  # LocalStack for AWS services emulation
+  localstack:
+    image: localstack/localstack:3.0
+    container_name: genai-obs-localstack
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      SERVICES: s3,sqs,sns,dynamodb,kinesis,firehose,lambda,stepfunctions,ses
+      DEBUG: ${LOCALSTACK_DEBUG:-0}
+      PERSISTENCE: 1
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - genai-obs-network
+
+  # ============================================================
+  # Application Services
+  # ============================================================
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: genai-obs-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-localdev123}@postgres:5432/genai_observability
+      - REDIS_URL=redis://redis:6379
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=us-east-1
+      - ENVIRONMENT=local
+      - LOG_LEVEL=DEBUG
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - JWT_SECRET=${JWT_SECRET:-local-dev-secret-change-in-prod}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    volumes:
+      - ./api/src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - genai-obs-network
+
+  # WebSocket server for real-time updates
+  websocket:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.websocket
+    container_name: genai-obs-websocket
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-localdev123}@postgres:5432/genai_observability
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-local-dev-secret-change-in-prod}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - genai-obs-network
+
+  # ============================================================
+  # Frontend
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: genai-obs-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_ENDPOINT=http://localhost:8000
+      - VITE_WS_ENDPOINT=ws://localhost:8001
+      - VITE_ENVIRONMENT=local
+    volumes:
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+    depends_on:
+      - api
+    networks:
+      - genai-obs-network
+
+  # ============================================================
+  # Monitoring Stack
+  # ============================================================
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: genai-obs-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - genai-obs-network
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: genai-obs-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - genai-obs-network
+
+  # ============================================================
+  # Background Workers
+  # ============================================================
+  worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.worker
+    container_name: genai-obs-worker
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-localdev123}@postgres:5432/genai_observability
+      - REDIS_URL=redis://redis:6379
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=us-east-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - genai-obs-network
+
+  # ============================================================
+  # Development Tools
+  # ============================================================
+  adminer:
+    image: adminer:4
+    container_name: genai-obs-adminer
+    ports:
+      - "8080:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    depends_on:
+      - postgres
+    networks:
+      - genai-obs-network
+    profiles:
+      - tools
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: genai-obs-redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - genai-obs-network
+    profiles:
+      - tools
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: genai-obs-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - genai-obs-network
+    profiles:
+      - tools
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  genai-obs-network:
+    driver: bridge
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  postgres_data:
+  redis_data:
+  localstack_data:
+  prometheus_data:
+  grafana_data:

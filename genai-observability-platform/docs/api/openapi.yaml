@@ -1,0 +1,1104 @@
+openapi: 3.1.0
+info:
+  title: GenAI Observability Platform API
+  description: |
+    REST API for the GenAI Observability Platform.
+
+    ## Authentication
+
+    The API supports two authentication methods:
+
+    1. **API Key** (for SDK/agents): Pass in `X-API-Key` header
+    2. **JWT Token** (for dashboard): Pass in `Authorization: Bearer <token>` header
+
+    ## Rate Limiting
+
+    - API keys: 1000 requests/minute
+    - JWT tokens: 100 requests/minute
+
+    ## Pagination
+
+    List endpoints support pagination via `limit` and `offset` query parameters.
+    Response includes `total` count and `has_more` boolean.
+
+  version: 1.0.0
+  contact:
+    name: Platform Team
+    email: platform@example.com
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.observability.example.com
+    description: Production
+  - url: https://api.staging.observability.example.com
+    description: Staging
+  - url: http://localhost:8000
+    description: Local Development
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Events
+    description: Event ingestion (SDK)
+  - name: Traces
+    description: Trace management
+  - name: Agents
+    description: Agent management
+  - name: Alerts
+    description: Alert management
+  - name: Metrics
+    description: Metrics and analytics
+  - name: API Keys
+    description: API key management
+  - name: Auth
+    description: Authentication
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/events:
+    post:
+      tags: [Events]
+      summary: Ingest events
+      description: Ingest telemetry events from SDK
+      operationId: ingestEvents
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Event'
+              maxItems: 100
+      responses:
+        '202':
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/traces:
+    get:
+      tags: [Traces]
+      summary: List traces
+      operationId: listTraces
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, error]
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: List of traces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/traces/{trace_id}:
+    get:
+      tags: [Traces]
+      summary: Get trace details
+      operationId: getTrace
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include_spans
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Trace details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/traces/search:
+    get:
+      tags: [Traces]
+      summary: Search traces
+      operationId: searchTraces
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceList'
+
+  /api/v1/agents:
+    get:
+      tags: [Agents]
+      summary: List agents
+      operationId: listAgents
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: team_id
+          in: query
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentList'
+    post:
+      tags: [Agents]
+      summary: Register agent
+      operationId: registerAgent
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentCreate'
+      responses:
+        '201':
+          description: Agent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Agent already exists
+
+  /api/v1/agents/{agent_id}:
+    get:
+      tags: [Agents]
+      summary: Get agent details
+      operationId: getAgent
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Agents]
+      summary: Update agent
+      operationId: updateAgent
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentUpdate'
+      responses:
+        '200':
+          description: Agent updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+    delete:
+      tags: [Agents]
+      summary: Delete agent
+      operationId: deleteAgent
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Agent deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{agent_id}/metrics:
+    get:
+      tags: [Agents, Metrics]
+      summary: Get agent metrics
+      operationId: getAgentMetrics
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [1h, 24h, 7d, 30d]
+            default: 24h
+      responses:
+        '200':
+          description: Agent metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMetrics'
+
+  /api/v1/alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts
+      operationId: listAlerts
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, acknowledged, resolved]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, high, medium, low, info]
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: List of alerts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertList'
+
+  /api/v1/alerts/{alert_id}:
+    get:
+      tags: [Alerts]
+      summary: Get alert details
+      operationId: getAlert
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Alert details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Alerts]
+      summary: Update alert status
+      operationId: updateAlert
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertUpdate'
+      responses:
+        '200':
+          description: Alert updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+
+  /api/v1/alerts/rules:
+    get:
+      tags: [Alerts]
+      summary: List alert rules
+      operationId: listAlertRules
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: is_enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of alert rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertRuleList'
+    post:
+      tags: [Alerts]
+      summary: Create alert rule
+      operationId: createAlertRule
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertRuleCreate'
+      responses:
+        '201':
+          description: Alert rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertRule'
+
+  /api/v1/metrics/summary:
+    get:
+      tags: [Metrics]
+      summary: Get metrics summary
+      operationId: getMetricsSummary
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [1h, 24h, 7d, 30d]
+            default: 24h
+      responses:
+        '200':
+          description: Metrics summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsSummary'
+
+  /api/v1/metrics/tokens:
+    get:
+      tags: [Metrics]
+      summary: Get token usage metrics
+      operationId: getTokenMetrics
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: model
+          in: query
+          schema:
+            type: string
+        - name: period
+          in: query
+          schema:
+            type: string
+            default: 24h
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [agent, model, hour, day]
+            default: model
+      responses:
+        '200':
+          description: Token metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenMetrics'
+
+  /api/v1/api-keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys
+      operationId: listApiKeys
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyList'
+    post:
+      tags: [API Keys]
+      summary: Create API key
+      operationId: createApiKey
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreate'
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreated'
+
+  /api/v1/api-keys/{key_id}:
+    delete:
+      tags: [API Keys]
+      summary: Revoke API key
+      operationId: revokeApiKey
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: API key revoked
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/auth/validate:
+    get:
+      tags: [Auth]
+      summary: Validate API key
+      operationId: validateApiKey
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: API key is valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyValidation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until rate limit resets
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        environment:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    Event:
+      type: object
+      required: [event_id, event_type, timestamp, agent_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          enum: [trace_start, trace_end, span_start, span_end, llm_start, llm_end, tool_start, tool_end, error]
+        timestamp:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+        trace_id:
+          type: string
+        span_id:
+          type: string
+        parent_span_id:
+          type: string
+        name:
+          type: string
+        attributes:
+          type: object
+
+    IngestResponse:
+      type: object
+      properties:
+        accepted:
+          type: integer
+        failed:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+
+    TraceList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceSummary'
+        total:
+          type: integer
+        has_more:
+          type: boolean
+
+    TraceSummary:
+      type: object
+      properties:
+        trace_id:
+          type: string
+        agent_id:
+          type: string
+        root_span_name:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+        status:
+          type: string
+          enum: [success, error]
+        span_count:
+          type: integer
+
+    TraceDetail:
+      allOf:
+        - $ref: '#/components/schemas/TraceSummary'
+        - type: object
+          properties:
+            spans:
+              type: array
+              items:
+                $ref: '#/components/schemas/Span'
+            total_tokens:
+              type: integer
+            total_cost_usd:
+              type: number
+            error:
+              type: object
+
+    Span:
+      type: object
+      properties:
+        span_id:
+          type: string
+        parent_span_id:
+          type: string
+        name:
+          type: string
+        span_type:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+        status:
+          type: string
+        attributes:
+          type: object
+        error:
+          type: object
+
+    AgentList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+        total:
+          type: integer
+
+    Agent:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        framework:
+          type: string
+        environment:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    AgentCreate:
+      type: object
+      required: [agent_id, name]
+      properties:
+        agent_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        framework:
+          type: string
+        environment:
+          type: string
+          default: dev
+
+    AgentUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        framework:
+          type: string
+        is_active:
+          type: boolean
+
+    AgentMetrics:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        period:
+          type: string
+        total_traces:
+          type: integer
+        success_rate:
+          type: number
+        error_rate:
+          type: number
+        avg_duration_ms:
+          type: number
+        p95_duration_ms:
+          type: number
+        total_tokens:
+          type: integer
+        total_cost_usd:
+          type: number
+
+    AlertList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        total:
+          type: integer
+
+    Alert:
+      type: object
+      properties:
+        alert_id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+          format: uuid
+        agent_id:
+          type: string
+        trace_id:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [open, acknowledged, resolved]
+        triggered_at:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+        investigation:
+          type: object
+
+    AlertUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [acknowledged, resolved]
+        note:
+          type: string
+        resolution_note:
+          type: string
+
+    AlertRuleList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertRule'
+
+    AlertRule:
+      type: object
+      properties:
+        rule_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        rule_type:
+          type: string
+        conditions:
+          type: object
+        severity:
+          type: string
+        is_enabled:
+          type: boolean
+
+    AlertRuleCreate:
+      type: object
+      required: [name, rule_type, conditions]
+      properties:
+        name:
+          type: string
+        agent_id:
+          type: string
+        rule_type:
+          type: string
+          enum: [error_rate, latency, token_usage, anomaly]
+        conditions:
+          type: object
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+          default: medium
+
+    MetricsSummary:
+      type: object
+      properties:
+        total_traces:
+          type: integer
+        success_rate:
+          type: number
+        error_rate:
+          type: number
+        p50_latency_ms:
+          type: number
+        p95_latency_ms:
+          type: number
+        p99_latency_ms:
+          type: number
+        total_tokens:
+          type: integer
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_cost_usd:
+          type: number
+
+    TokenMetrics:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              group_value:
+                type: string
+              prompt_tokens:
+                type: integer
+              completion_tokens:
+                type: integer
+              total_tokens:
+                type: integer
+              cost_usd:
+                type: number
+
+    ApiKeyList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKey'
+
+    ApiKey:
+      type: object
+      properties:
+        key_id:
+          type: string
+          format: uuid
+        key_prefix:
+          type: string
+        name:
+          type: string
+        agent_id:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    ApiKeyCreate:
+      type: object
+      required: [name, agent_id]
+      properties:
+        name:
+          type: string
+        agent_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        scopes:
+          type: array
+          items:
+            type: string
+
+    ApiKeyCreated:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          properties:
+            api_key:
+              type: string
+              description: Full API key (only shown once)
+
+    ApiKeyValidation:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        agent_id:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time

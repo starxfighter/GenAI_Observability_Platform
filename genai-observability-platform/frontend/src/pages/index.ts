@@ -1,0 +1,7 @@
+export { default as Dashboard } from './Dashboard'
+export { default as Traces } from './Traces'
+export { default as TraceDetail } from './TraceDetail'
+export { default as Agents } from './Agents'
+export { default as AgentDetail } from './AgentDetail'
+export { default as Alerts } from './Alerts'
+export { default as Settings } from './Settings'

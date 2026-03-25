@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(xargs ls:*)",
+      "Bash(find:*)",
+      "Bash(D:\\\\anaconda3\\\\python.exe:*)",
+      "Bash(\"D:\\\\anaconda3\\\\Scripts\\\\conda.exe\" init bash)",
+      "Bash(source:*)"
+    ]
+  }
+}

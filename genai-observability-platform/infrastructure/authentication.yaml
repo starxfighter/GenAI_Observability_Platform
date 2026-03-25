@@ -1,0 +1,444 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Cognito Authentication'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+  ProjectName:
+    Type: String
+    Default: genai-observability
+  CallbackURLs:
+    Type: CommaDelimitedList
+    Description: OAuth callback URLs (comma-separated)
+    Default: 'http://localhost:3000/auth/callback'
+  LogoutURLs:
+    Type: CommaDelimitedList
+    Description: OAuth logout URLs (comma-separated)
+    Default: 'http://localhost:3000'
+  DomainPrefix:
+    Type: String
+    Description: Cognito hosted UI domain prefix
+    Default: genai-observability
+
+Resources:
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-${Environment}-users'
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: 'OPTIONAL'
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      UserPoolAddOns:
+        AdvancedSecurityMode: ENFORCED
+
+      # Password policy
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+
+      # Schema attributes
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+          AttributeDataType: String
+        - Name: name
+          Required: true
+          Mutable: true
+          AttributeDataType: String
+        - Name: team_id
+          Mutable: true
+          AttributeDataType: String
+        - Name: role
+          Mutable: true
+          AttributeDataType: String
+
+      # Email configuration
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      EmailVerificationMessage: |
+        Your GenAI Observability Platform verification code is {####}.
+
+        This code will expire in 24 hours.
+      EmailVerificationSubject: 'GenAI Observability - Verify Your Email'
+
+      # Account recovery
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+      # User pool tags
+      UserPoolTags:
+        Environment: !Ref Environment
+        Project: !Ref ProjectName
+
+  # User Pool Domain
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${DomainPrefix}-${Environment}'
+      UserPoolId: !Ref UserPool
+
+  # User Pool Client (Web Application)
+  UserPoolClientWeb:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${ProjectName}-${Environment}-web-client'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      RefreshTokenValidity: 30
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      TokenValidityUnits:
+        RefreshToken: days
+        AccessToken: hours
+        IdToken: hours
+
+      # OAuth configuration
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs: !Ref CallbackURLs
+      LogoutURLs: !Ref LogoutURLs
+      SupportedIdentityProviders:
+        - COGNITO
+
+      # Security
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+
+      # Read/write attributes
+      ReadAttributes:
+        - email
+        - email_verified
+        - name
+        - custom:team_id
+        - custom:role
+      WriteAttributes:
+        - email
+        - name
+
+  # User Pool Client (API/Machine-to-Machine)
+  UserPoolClientAPI:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${ProjectName}-${Environment}-api-client'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      RefreshTokenValidity: 30
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      TokenValidityUnits:
+        RefreshToken: days
+        AccessToken: hours
+        IdToken: hours
+
+      # OAuth configuration
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - !Sub '${ResourceServer}/read'
+        - !Sub '${ResourceServer}/write'
+
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+
+  # Resource Server (for API scopes)
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: !Sub 'https://api.${ProjectName}.${Environment}'
+      Name: !Sub '${ProjectName}-api'
+      UserPoolId: !Ref UserPool
+      Scopes:
+        - ScopeName: read
+          ScopeDescription: Read access to observability data
+        - ScopeName: write
+          ScopeDescription: Write access (create agents, alerts, etc.)
+        - ScopeName: admin
+          ScopeDescription: Administrative access
+
+  # Cognito User Groups
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Admins
+      UserPoolId: !Ref UserPool
+      Description: Platform administrators with full access
+      Precedence: 0
+      RoleArn: !GetAtt AdminRole.Arn
+
+  TeamAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: TeamAdmins
+      UserPoolId: !Ref UserPool
+      Description: Team administrators who can manage their team's resources
+      Precedence: 10
+      RoleArn: !GetAtt TeamAdminRole.Arn
+
+  DeveloperGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Developers
+      UserPoolId: !Ref UserPool
+      Description: Developers who can view and create resources
+      Precedence: 20
+      RoleArn: !GetAtt DeveloperRole.Arn
+
+  ViewerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Viewers
+      UserPoolId: !Ref UserPool
+      Description: Read-only access to observability data
+      Precedence: 30
+      RoleArn: !GetAtt ViewerRole.Arn
+
+  # IAM Roles for Cognito Groups
+  AdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cognito-admin'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref IdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+      Policies:
+        - PolicyName: AdminPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+
+  TeamAdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cognito-team-admin'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref IdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+      Policies:
+        - PolicyName: TeamAdminPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+
+  DeveloperRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cognito-developer'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref IdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+      Policies:
+        - PolicyName: DeveloperPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+
+  ViewerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cognito-viewer'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref IdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+      Policies:
+        - PolicyName: ViewerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:Invoke
+                Resource: '*'
+
+  # Cognito Identity Pool
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub '${ProjectName}-${Environment}-identity-pool'
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClientWeb
+          ProviderName: !GetAtt UserPool.ProviderName
+          ServerSideTokenCheck: true
+
+  # Identity Pool Role Attachment
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt ViewerRole.Arn
+      RoleMappings:
+        UserPoolMapping:
+          IdentityProvider: !Sub '${UserPool.ProviderName}:${UserPoolClientWeb}'
+          Type: Token
+          AmbiguousRoleResolution: AuthenticatedRole
+
+  # Lambda trigger for post-confirmation (sync to RDS)
+  PostConfirmationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-cognito-trigger-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: '*'
+
+  PostConfirmationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-cognito-post-confirmation'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt PostConfirmationLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import psycopg2
+
+          def handler(event, context):
+              print(f"Post confirmation event: {json.dumps(event)}")
+
+              user_attributes = event['request']['userAttributes']
+              user_id = user_attributes['sub']
+              email = user_attributes['email']
+              name = user_attributes.get('name', email.split('@')[0])
+
+              # In production, fetch RDS credentials from Secrets Manager
+              # and insert user into the users table
+
+              print(f"User confirmed: {email} ({user_id})")
+
+              return event
+
+  PostConfirmationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PostConfirmationLambda
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-user-pool-id'
+
+  UserPoolArn:
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-user-pool-arn'
+
+  UserPoolClientIdWeb:
+    Value: !Ref UserPoolClientWeb
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-user-pool-client-web'
+
+  UserPoolClientIdAPI:
+    Value: !Ref UserPoolClientAPI
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-user-pool-client-api'
+
+  IdentityPoolId:
+    Value: !Ref IdentityPool
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-identity-pool-id'
+
+  CognitoDomain:
+    Value: !Sub 'https://${DomainPrefix}-${Environment}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-cognito-domain'
+
+  UserPoolProviderName:
+    Value: !GetAtt UserPool.ProviderName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-user-pool-provider'

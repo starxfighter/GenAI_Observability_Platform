@@ -1,0 +1,771 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Multi-Region Support for GenAI Observability Platform'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+
+  PrimaryRegion:
+    Type: String
+    Default: us-east-1
+    Description: Primary AWS region
+
+  SecondaryRegion:
+    Type: String
+    Default: us-west-2
+    Description: Secondary AWS region for failover
+
+  DomainName:
+    Type: String
+    Description: Custom domain name for the platform
+    Default: ''
+
+  EnableActiveActive:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable active-active multi-region (vs active-passive)
+
+  ReplicationMode:
+    Type: String
+    Default: async
+    AllowedValues:
+      - sync
+      - async
+    Description: Data replication mode
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref DomainName, '']]
+  IsActiveActive: !Equals [!Ref EnableActiveActive, 'true']
+  IsProduction: !Equals [!Ref Environment, 'production']
+
+Resources:
+  # ==========================================================================
+  # GLOBAL DYNAMODB TABLES
+  # ==========================================================================
+
+  GlobalTracesTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Condition: IsProduction
+    Properties:
+      TableName: !Sub 'genai-obs-traces-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: trace_id
+          AttributeType: S
+        - AttributeName: agent_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: trace_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-timestamp-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Replicas:
+        - Region: !Ref PrimaryRegion
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+          ContributorInsightsSpecification:
+            Enabled: true
+        - Region: !Ref SecondaryRegion
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+          ContributorInsightsSpecification:
+            Enabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: MultiRegion
+          Value: 'true'
+
+  GlobalErrorsTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Condition: IsProduction
+    Properties:
+      TableName: !Sub 'genai-obs-errors-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: error_id
+          AttributeType: S
+        - AttributeName: agent_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: error_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-timestamp-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Replicas:
+        - Region: !Ref PrimaryRegion
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+        - Region: !Ref SecondaryRegion
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: MultiRegion
+          Value: 'true'
+
+  GlobalInvestigationsTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Condition: IsProduction
+    Properties:
+      TableName: !Sub 'genai-obs-investigations-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: investigation_id
+          AttributeType: S
+        - AttributeName: agent_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: investigation_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-timestamp-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Replicas:
+        - Region: !Ref PrimaryRegion
+        - Region: !Ref SecondaryRegion
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================================================
+  # CROSS-REGION S3 REPLICATION
+  # ==========================================================================
+
+  PrimaryDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'genai-obs-data-${Environment}-${PrimaryRegion}'
+      VersioningConfiguration:
+        Status: Enabled
+      ReplicationConfiguration:
+        Role: !GetAtt S3ReplicationRole.Arn
+        Rules:
+          - Id: CrossRegionReplication
+            Status: Enabled
+            Priority: 1
+            DeleteMarkerReplication:
+              Status: Disabled
+            Filter:
+              Prefix: ''
+            Destination:
+              Bucket: !Sub 'arn:aws:s3:::genai-obs-data-${Environment}-${SecondaryRegion}'
+              StorageClass: STANDARD_IA
+              ReplicationTime:
+                Status: Enabled
+                Time:
+                  Minutes: 15
+              Metrics:
+                Status: Enabled
+                EventThreshold:
+                  Minutes: 15
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+          - Id: DeleteOldData
+            Status: Enabled
+            ExpirationInDays: 365
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref DataEncryptionKey
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  S3ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'genai-obs-s3-replication-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3ReplicationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetReplicationConfiguration
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::genai-obs-data-${Environment}-${PrimaryRegion}'
+              - Effect: Allow
+                Action:
+                  - s3:GetObjectVersionForReplication
+                  - s3:GetObjectVersionAcl
+                  - s3:GetObjectVersionTagging
+                Resource: !Sub 'arn:aws:s3:::genai-obs-data-${Environment}-${PrimaryRegion}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ReplicateObject
+                  - s3:ReplicateDelete
+                  - s3:ReplicateTags
+                Resource: !Sub 'arn:aws:s3:::genai-obs-data-${Environment}-${SecondaryRegion}/*'
+
+  # ==========================================================================
+  # ENCRYPTION
+  # ==========================================================================
+
+  DataEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Encryption key for GenAI Observability data - ${Environment}'
+      EnableKeyRotation: true
+      MultiRegion: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow S3 Service
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  DataEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/genai-obs-data-${Environment}'
+      TargetKeyId: !Ref DataEncryptionKey
+
+  # ==========================================================================
+  # GLOBAL API GATEWAY (Route53 + ACM)
+  # ==========================================================================
+
+  GlobalAPIGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'genai-obs-api-${Environment}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-API-Key
+      Tags:
+        Environment: !Ref Environment
+
+  # Health check endpoint for failover
+  HealthCheckFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'genai-obs-health-check-${Environment}'
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 10
+      MemorySize: 128
+      Role: !GetAtt HealthCheckRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+
+          def handler(event, context):
+              region = os.environ.get('AWS_REGION', 'unknown')
+              checks = {
+                  'region': region,
+                  'status': 'healthy',
+                  'services': {}
+              }
+
+              # Check DynamoDB
+              try:
+                  dynamodb = boto3.client('dynamodb')
+                  dynamodb.describe_limits()
+                  checks['services']['dynamodb'] = 'healthy'
+              except Exception as e:
+                  checks['services']['dynamodb'] = f'unhealthy: {str(e)}'
+                  checks['status'] = 'degraded'
+
+              # Check Timestream
+              try:
+                  timestream = boto3.client('timestream-query')
+                  timestream.describe_endpoints()
+                  checks['services']['timestream'] = 'healthy'
+              except Exception as e:
+                  checks['services']['timestream'] = f'unhealthy: {str(e)}'
+                  checks['status'] = 'degraded'
+
+              return {
+                  'statusCode': 200 if checks['status'] == 'healthy' else 503,
+                  'body': json.dumps(checks),
+                  'headers': {'Content-Type': 'application/json'}
+              }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  HealthCheckRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: HealthCheckPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeLimits
+                  - timestream:DescribeEndpoints
+                Resource: '*'
+
+  # ==========================================================================
+  # ROUTE53 HEALTH CHECKS AND FAILOVER
+  # ==========================================================================
+
+  PrimaryHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Condition: HasCustomDomain
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS
+        FullyQualifiedDomainName: !Sub 'api-${PrimaryRegion}.${DomainName}'
+        Port: 443
+        ResourcePath: /health
+        RequestInterval: 30
+        FailureThreshold: 3
+        MeasureLatency: true
+        Regions:
+          - us-east-1
+          - us-west-2
+          - eu-west-1
+      HealthCheckTags:
+        - Key: Name
+          Value: !Sub 'genai-obs-primary-health-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+
+  SecondaryHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Condition: HasCustomDomain
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS
+        FullyQualifiedDomainName: !Sub 'api-${SecondaryRegion}.${DomainName}'
+        Port: 443
+        ResourcePath: /health
+        RequestInterval: 30
+        FailureThreshold: 3
+        MeasureLatency: true
+        Regions:
+          - us-east-1
+          - us-west-2
+          - eu-west-1
+      HealthCheckTags:
+        - Key: Name
+          Value: !Sub 'genai-obs-secondary-health-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================================================
+  # CROSS-REGION EVENT REPLICATION
+  # ==========================================================================
+
+  CrossRegionEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub 'genai-obs-events-${Environment}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  CrossRegionEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'genai-obs-cross-region-${Environment}'
+      EventBusName: !Ref CrossRegionEventBus
+      EventPattern:
+        source:
+          - genai.observability
+        detail-type:
+          - TraceCreated
+          - ErrorOccurred
+          - InvestigationCompleted
+          - RemediationExecuted
+      State: ENABLED
+      Targets:
+        - Id: CrossRegionTarget
+          Arn: !Sub 'arn:aws:events:${SecondaryRegion}:${AWS::AccountId}:event-bus/genai-obs-events-${Environment}'
+          RoleArn: !GetAtt EventBridgeCrossRegionRole.Arn
+
+  EventBridgeCrossRegionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'genai-obs-eventbridge-xregion-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CrossRegionEventPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource:
+                  - !Sub 'arn:aws:events:${SecondaryRegion}:${AWS::AccountId}:event-bus/genai-obs-events-${Environment}'
+
+  # ==========================================================================
+  # REGION FAILOVER LAMBDA
+  # ==========================================================================
+
+  FailoverFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'genai-obs-failover-${Environment}'
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt FailoverRole.Arn
+      Environment:
+        Variables:
+          PRIMARY_REGION: !Ref PrimaryRegion
+          SECONDARY_REGION: !Ref SecondaryRegion
+          ENVIRONMENT: !Ref Environment
+          DOMAIN_NAME: !Ref DomainName
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          PRIMARY_REGION = os.environ['PRIMARY_REGION']
+          SECONDARY_REGION = os.environ['SECONDARY_REGION']
+          ENVIRONMENT = os.environ['ENVIRONMENT']
+
+          def handler(event, context):
+              """
+              Handle region failover.
+
+              Can be triggered by:
+              - CloudWatch alarm
+              - Manual invocation
+              - Health check failure
+              """
+              action = event.get('action', 'check')
+              target_region = event.get('target_region')
+
+              if action == 'check':
+                  return check_region_health()
+              elif action == 'failover':
+                  return execute_failover(target_region)
+              elif action == 'failback':
+                  return execute_failback()
+              else:
+                  return {'error': f'Unknown action: {action}'}
+
+          def check_region_health():
+              """Check health of both regions."""
+              results = {
+                  'primary': check_single_region(PRIMARY_REGION),
+                  'secondary': check_single_region(SECONDARY_REGION),
+                  'active_region': get_active_region(),
+              }
+
+              # Determine if failover is needed
+              if not results['primary']['healthy'] and results['secondary']['healthy']:
+                  results['recommendation'] = 'failover_to_secondary'
+              elif results['primary']['healthy'] and not results['secondary']['healthy']:
+                  results['recommendation'] = 'secondary_degraded'
+              elif not results['primary']['healthy'] and not results['secondary']['healthy']:
+                  results['recommendation'] = 'critical_both_regions_down'
+              else:
+                  results['recommendation'] = 'healthy'
+
+              return results
+
+          def check_single_region(region):
+              """Check health of a single region."""
+              checks = {
+                  'region': region,
+                  'healthy': True,
+                  'services': {},
+              }
+
+              # Check DynamoDB
+              try:
+                  dynamodb = boto3.client('dynamodb', region_name=region)
+                  dynamodb.describe_limits()
+                  checks['services']['dynamodb'] = 'healthy'
+              except Exception as e:
+                  checks['services']['dynamodb'] = f'unhealthy: {str(e)}'
+                  checks['healthy'] = False
+
+              # Check Lambda
+              try:
+                  lambda_client = boto3.client('lambda', region_name=region)
+                  lambda_client.get_account_settings()
+                  checks['services']['lambda'] = 'healthy'
+              except Exception as e:
+                  checks['services']['lambda'] = f'unhealthy: {str(e)}'
+                  checks['healthy'] = False
+
+              return checks
+
+          def get_active_region():
+              """Get the currently active region."""
+              # In production, this would check Route53 or a configuration store
+              return PRIMARY_REGION
+
+          def execute_failover(target_region):
+              """Execute failover to target region."""
+              if not target_region:
+                  target_region = SECONDARY_REGION
+
+              logger.info(f'Executing failover to {target_region}')
+
+              # Steps:
+              # 1. Update Route53 records
+              # 2. Update API Gateway
+              # 3. Notify stakeholders
+              # 4. Update configuration
+
+              # This is a simplified version - production would include:
+              # - Route53 record updates
+              # - DNS propagation verification
+              # - Service warm-up
+              # - Data consistency checks
+
+              return {
+                  'status': 'failover_initiated',
+                  'target_region': target_region,
+                  'message': 'Failover process started. DNS propagation may take up to 5 minutes.',
+              }
+
+          def execute_failback():
+              """Execute failback to primary region."""
+              logger.info(f'Executing failback to {PRIMARY_REGION}')
+
+              # Verify primary region is healthy
+              primary_health = check_single_region(PRIMARY_REGION)
+              if not primary_health['healthy']:
+                  return {
+                      'status': 'failback_blocked',
+                      'reason': 'Primary region is not healthy',
+                      'health': primary_health,
+                  }
+
+              return {
+                  'status': 'failback_initiated',
+                  'target_region': PRIMARY_REGION,
+                  'message': 'Failback process started.',
+              }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  FailoverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'genai-obs-failover-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: FailoverPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeLimits
+                  - lambda:GetAccountSettings
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetHealthCheck
+                  - sns:Publish
+                Resource: '*'
+
+  # ==========================================================================
+  # CLOUDWATCH ALARMS FOR FAILOVER
+  # ==========================================================================
+
+  FailoverAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'genai-obs-failover-trigger-${Environment}'
+      AlarmDescription: Triggers failover when primary region health check fails
+      ComparisonOperator: LessThanThreshold
+      EvaluationPeriods: 3
+      MetricName: HealthCheckStatus
+      Namespace: AWS/Route53
+      Period: 60
+      Statistic: Minimum
+      Threshold: 1
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref FailoverAlarmTopic
+      Dimensions:
+        - Name: HealthCheckId
+          Value: !If [HasCustomDomain, !Ref PrimaryHealthCheck, 'placeholder']
+
+  FailoverAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'genai-obs-failover-alarms-${Environment}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  FailoverAlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref FailoverAlarmTopic
+      Protocol: lambda
+      Endpoint: !GetAtt FailoverFunction.Arn
+
+  FailoverLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FailoverFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref FailoverAlarmTopic
+
+Outputs:
+  GlobalTracesTableArn:
+    Description: ARN of the global traces table
+    Value: !If [IsProduction, !GetAtt GlobalTracesTable.Arn, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-GlobalTracesTableArn'
+
+  GlobalErrorsTableArn:
+    Description: ARN of the global errors table
+    Value: !If [IsProduction, !GetAtt GlobalErrorsTable.Arn, 'N/A']
+    Export:
+      Name: !Sub '${AWS::StackName}-GlobalErrorsTableArn'
+
+  PrimaryDataBucketArn:
+    Description: ARN of the primary data bucket
+    Value: !GetAtt PrimaryDataBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PrimaryDataBucketArn'
+
+  CrossRegionEventBusArn:
+    Description: ARN of the cross-region event bus
+    Value: !GetAtt CrossRegionEventBus.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CrossRegionEventBusArn'
+
+  FailoverFunctionArn:
+    Description: ARN of the failover function
+    Value: !GetAtt FailoverFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FailoverFunctionArn'
+
+  DataEncryptionKeyArn:
+    Description: ARN of the data encryption key
+    Value: !GetAtt DataEncryptionKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DataEncryptionKeyArn'

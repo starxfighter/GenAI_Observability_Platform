@@ -1,0 +1,325 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infrastructure/**'
+      - 'lambda/**'
+      - 'api/**'
+      - 'frontend/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "18"
+
+jobs:
+  # ============================================================
+  # Determine Environment
+  # ============================================================
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+
+    steps:
+      - name: Set environment
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================
+  # Package Lambda Functions
+  # ============================================================
+  package-lambdas:
+    name: Package Lambda Functions
+    runs-on: ubuntu-latest
+    needs: setup
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package Lambda functions
+        run: |
+          cd lambda
+
+          # Create dist directory
+          mkdir -p dist
+
+          # Package each Lambda function
+          for dir in */; do
+            if [[ "$dir" != "shared/" ]] && [[ "$dir" != "tests/" ]] && [[ "$dir" != "dist/" ]]; then
+              echo "Packaging $dir..."
+
+              # Create temp directory
+              mkdir -p /tmp/lambda-package
+
+              # Copy function code
+              cp -r "$dir"* /tmp/lambda-package/
+
+              # Copy shared modules
+              cp -r shared/observability_common /tmp/lambda-package/
+
+              # Install dependencies if requirements.txt exists
+              if [[ -f "$dir/requirements.txt" ]]; then
+                pip install -r "$dir/requirements.txt" -t /tmp/lambda-package/
+              fi
+
+              # Create zip
+              cd /tmp/lambda-package
+              zip -r "${GITHUB_WORKSPACE}/lambda/dist/${dir%/}.zip" .
+              cd -
+
+              # Cleanup
+              rm -rf /tmp/lambda-package
+            fi
+          done
+
+      - name: Upload Lambda packages to S3
+        run: |
+          BUCKET="genai-observability-artifacts-${{ secrets.AWS_ACCOUNT_ID }}"
+          aws s3 sync lambda/dist/ s3://${BUCKET}/lambda/${{ needs.setup.outputs.environment }}/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-packages
+          path: lambda/dist/
+          retention-days: 7
+
+  # ============================================================
+  # Deploy Infrastructure
+  # ============================================================
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [setup, package-lambdas]
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload CloudFormation templates
+        run: |
+          BUCKET="genai-observability-artifacts-${{ secrets.AWS_ACCOUNT_ID }}"
+          aws s3 sync infrastructure/ s3://${BUCKET}/infrastructure/
+
+      - name: Deploy CloudFormation stack
+        run: |
+          BUCKET="genai-observability-artifacts-${{ secrets.AWS_ACCOUNT_ID }}"
+          ENV="${{ needs.setup.outputs.environment }}"
+
+          aws cloudformation deploy \
+            --template-file infrastructure/main.yaml \
+            --stack-name genai-observability-${ENV} \
+            --parameter-overrides \
+              Environment=${ENV} \
+              ProjectName=genai-observability \
+              TemplatesBucketName=${BUCKET} \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --tags Environment=${ENV} Project=genai-observability
+
+      - name: Output stack info
+        run: |
+          ENV="${{ needs.setup.outputs.environment }}"
+          aws cloudformation describe-stacks \
+            --stack-name genai-observability-${ENV} \
+            --query 'Stacks[0].Outputs' \
+            --output table
+
+  # ============================================================
+  # Deploy API
+  # ============================================================
+  deploy-api:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure]
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: genai-observability-api
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cd api
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:${{ needs.setup.outputs.environment }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ needs.setup.outputs.environment }}
+
+      # Add ECS/Fargate deployment or Lambda deployment here
+
+  # ============================================================
+  # Deploy Frontend
+  # ============================================================
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure]
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get API endpoint
+        id: get-api
+        run: |
+          ENV="${{ needs.setup.outputs.environment }}"
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name genai-observability-${ENV} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          echo "api_endpoint=${API_ENDPOINT}" >> $GITHUB_OUTPUT
+
+      - name: Install and build
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          VITE_API_ENDPOINT: ${{ steps.get-api.outputs.api_endpoint }}
+          VITE_ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+
+      - name: Deploy to S3
+        run: |
+          BUCKET="genai-observability-frontend-${{ needs.setup.outputs.environment }}"
+          aws s3 sync frontend/dist/ s3://${BUCKET}/ --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name genai-observability-${{ needs.setup.outputs.environment }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text)
+
+          if [[ -n "$DISTRIBUTION_ID" ]]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/*"
+          fi
+
+  # ============================================================
+  # Run E2E Tests
+  # ============================================================
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-api, deploy-frontend]
+    if: needs.setup.outputs.environment != 'prod'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest requests
+
+      - name: Run E2E tests
+        run: |
+          cd tests/e2e
+          pytest -v --environment=${{ needs.setup.outputs.environment }}
+        env:
+          API_ENDPOINT: ${{ secrets[format('API_ENDPOINT_{0}', needs.setup.outputs.environment)] }}
+          API_KEY: ${{ secrets[format('API_KEY_{0}', needs.setup.outputs.environment)] }}
+
+  # ============================================================
+  # Notify
+  # ============================================================
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure, deploy-api, deploy-frontend]
+    if: always()
+
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "Deployment to ${{ needs.setup.outputs.environment }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*GenAI Observability Deployment*\n*Environment:* ${{ needs.setup.outputs.environment }}\n*Status:* ${{ needs.deploy-infrastructure.result == 'success' && needs.deploy-api.result == 'success' && needs.deploy-frontend.result == 'success' && '✅ Success' || '❌ Failed' }}\n*Commit:* `${{ github.sha }}`"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

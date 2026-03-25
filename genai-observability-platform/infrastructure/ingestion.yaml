@@ -1,0 +1,471 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Ingestion Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: genai-observability
+
+  KinesisShardCount:
+    Type: Number
+    Default: 2
+    Description: Number of Kinesis shards
+
+Resources:
+  #============================================================================
+  # Kinesis Data Streams
+  #============================================================================
+  EventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-events'
+      ShardCount: !Ref KinesisShardCount
+      RetentionPeriodHours: 24
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  #============================================================================
+  # API Gateway (HTTP API)
+  #============================================================================
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-api'
+      Description: GenAI Observability API
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - POST
+          - GET
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Agent-ID
+        MaxAge: 300
+      Tags:
+        Environment: !Ref Environment
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","path":"$context.path","status":"$context.status","responseLength":"$context.responseLength"}'
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${ProjectName}-${Environment}'
+      RetentionInDays: 30
+
+  #============================================================================
+  # Lambda Authorizer
+  #============================================================================
+  AuthorizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-authorizer'
+      Description: API key authorizer for observability API
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          AGENT_METADATA_TABLE:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-AgentMetadataTableName'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import hashlib
+          import boto3
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['AGENT_METADATA_TABLE'])
+
+          def handler(event, context):
+              # Extract token from Authorization header
+              auth_header = event.get('headers', {}).get('authorization', '')
+
+              if not auth_header.startswith('Bearer '):
+                  return generate_policy('anonymous', 'Deny', event['routeArn'])
+
+              api_key = auth_header[7:]  # Remove 'Bearer ' prefix
+
+              # Hash the API key to compare with stored hash
+              api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
+              # Look up agent by API key hash
+              try:
+                  # In production, you'd have an index on api_key_hash
+                  # For simplicity, we'll check the X-Agent-ID header
+                  agent_id = event.get('headers', {}).get('x-agent-id', '')
+
+                  if not agent_id:
+                      return generate_policy('anonymous', 'Deny', event['routeArn'])
+
+                  response = table.get_item(Key={'agent_id': agent_id})
+
+                  if 'Item' not in response:
+                      return generate_policy('anonymous', 'Deny', event['routeArn'])
+
+                  agent = response['Item']
+
+                  # Verify API key hash matches
+                  if agent.get('api_key_hash') != api_key_hash:
+                      return generate_policy('anonymous', 'Deny', event['routeArn'])
+
+                  # Return allow policy with agent context
+                  return generate_policy(
+                      agent_id,
+                      'Allow',
+                      event['routeArn'],
+                      context={
+                          'agent_id': agent_id,
+                          'team_name': agent.get('team_name', ''),
+                          'agent_type': agent.get('agent_type', '')
+                      }
+                  )
+
+              except Exception as e:
+                  print(f"Authorization error: {str(e)}")
+                  return generate_policy('anonymous', 'Deny', event['routeArn'])
+
+          def generate_policy(principal_id, effect, resource, context=None):
+              policy = {
+                  'principalId': principal_id,
+                  'policyDocument': {
+                      'Version': '2012-10-17',
+                      'Statement': [{
+                          'Action': 'execute-api:Invoke',
+                          'Effect': effect,
+                          'Resource': resource
+                      }]
+                  }
+              }
+
+              if context:
+                  policy['context'] = context
+
+              return policy
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  AuthorizerFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthorizerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  HttpApiAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerFunction.Arn}/invocations'
+      AuthorizerPayloadFormatVersion: '2.0'
+      AuthorizerResultTtlInSeconds: 300
+      EnableSimpleResponses: false
+      IdentitySource:
+        - $request.header.Authorization
+        - $request.header.X-Agent-ID
+      Name: api-key-authorizer
+
+  #============================================================================
+  # Ingestion Lambda
+  #============================================================================
+  IngestionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ingestion'
+      Description: Ingests events from API and writes to Kinesis
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          EVENTS_STREAM_NAME: !Ref EventsStream
+          RAW_DATA_BUCKET:
+            Fn::ImportValue: !Sub '${ProjectName}-${Environment}-RawDataBucketName'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import uuid
+          from datetime import datetime
+
+          kinesis = boto3.client('kinesis')
+          s3 = boto3.client('s3')
+
+          STREAM_NAME = os.environ['EVENTS_STREAM_NAME']
+          RAW_BUCKET = os.environ['RAW_DATA_BUCKET']
+
+          def handler(event, context):
+              try:
+                  # Parse request body
+                  body = json.loads(event.get('body', '{}'))
+
+                  # Get agent context from authorizer
+                  authorizer_context = event.get('requestContext', {}).get('authorizer', {}).get('lambda', {})
+                  agent_id = authorizer_context.get('agent_id', body.get('agent_id', 'unknown'))
+
+                  # Extract events from payload
+                  events = body.get('events', [])
+
+                  if not events:
+                      return {
+                          'statusCode': 400,
+                          'body': json.dumps({'error': 'No events provided'})
+                      }
+
+                  # Add metadata to each event
+                  timestamp = datetime.utcnow().isoformat() + 'Z'
+                  enriched_events = []
+
+                  for evt in events:
+                      enriched_event = {
+                          **evt,
+                          'agent_id': agent_id,
+                          'ingestion_timestamp': timestamp,
+                          'environment': body.get('environment', 'unknown'),
+                          'agent_type': body.get('agent_type', authorizer_context.get('agent_type', 'unknown')),
+                          'agent_version': body.get('agent_version', 'unknown'),
+                          'global_tags': body.get('global_tags', {}),
+                      }
+                      enriched_events.append(enriched_event)
+
+                  # Write to Kinesis in batches
+                  records = []
+                  for evt in enriched_events:
+                      records.append({
+                          'Data': json.dumps(evt).encode('utf-8'),
+                          'PartitionKey': agent_id
+                      })
+
+                      # Kinesis batch limit is 500 records
+                      if len(records) >= 500:
+                          kinesis.put_records(
+                              StreamName=STREAM_NAME,
+                              Records=records
+                          )
+                          records = []
+
+                  # Send remaining records
+                  if records:
+                      kinesis.put_records(
+                          StreamName=STREAM_NAME,
+                          Records=records
+                      )
+
+                  # Also write raw batch to S3 for backup
+                  date_prefix = datetime.utcnow().strftime('%Y/%m/%d/%H')
+                  s3_key = f'events/{agent_id}/{date_prefix}/{uuid.uuid4()}.json'
+
+                  s3.put_object(
+                      Bucket=RAW_BUCKET,
+                      Key=s3_key,
+                      Body=json.dumps({
+                          'agent_id': agent_id,
+                          'timestamp': timestamp,
+                          'events': enriched_events
+                      }),
+                      ContentType='application/json'
+                  )
+
+                  return {
+                      'statusCode': 202,
+                      'body': json.dumps({
+                          'status': 'accepted',
+                          'events_count': len(enriched_events),
+                          'agent_id': agent_id
+                      })
+                  }
+
+              except Exception as e:
+                  print(f"Ingestion error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({'error': str(e)})
+                  }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  IngestionFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngestionFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  IngestionFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${IngestionFunction}'
+      RetentionInDays: 30
+
+  #============================================================================
+  # API Routes
+  #============================================================================
+  EventsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /v1/events
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref HttpApiAuthorizer
+      Target: !Sub 'integrations/${EventsIntegration}'
+
+  EventsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt IngestionFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # Health check route (no auth)
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /health
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${HealthIntegration}'
+
+  HealthIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt HealthFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  HealthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-health'
+      Description: Health check endpoint
+      Runtime: python3.11
+      Handler: index.handler
+      Role:
+        Fn::ImportValue: !Sub '${ProjectName}-${Environment}-LambdaExecutionRoleArn'
+      Timeout: 10
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import json
+
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'status': 'healthy',
+                      'service': 'genai-observability'
+                  })
+              }
+
+  HealthFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref HealthFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  #============================================================================
+  # CloudWatch Alarms
+  #============================================================================
+  IngestionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-ingestion-errors'
+      AlarmDescription: Alarm when ingestion Lambda has errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref IngestionFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  KinesisIteratorAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-kinesis-iterator-age'
+      AlarmDescription: Alarm when Kinesis iterator age is too high (processing lag)
+      Namespace: AWS/Kinesis
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Dimensions:
+        - Name: StreamName
+          Value: !Ref EventsStream
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 60000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ApiEndpoint'
+
+  EventsStreamName:
+    Description: Kinesis events stream name
+    Value: !Ref EventsStream
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-EventsStreamName'
+
+  EventsStreamArn:
+    Description: Kinesis events stream ARN
+    Value: !GetAtt EventsStream.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-EventsStreamArn'
+
+  IngestionFunctionArn:
+    Description: Ingestion Lambda function ARN
+    Value: !GetAtt IngestionFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-IngestionFunctionArn'
+
+  AuthorizerFunctionArn:
+    Description: Authorizer Lambda function ARN
+    Value: !GetAtt AuthorizerFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AuthorizerFunctionArn'

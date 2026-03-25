@@ -1,0 +1,491 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Storage Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: genai-observability
+
+  # RDS Parameters
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: RDS instance class
+
+  DBMasterUsername:
+    Type: String
+    Default: obsadmin
+    NoEcho: true
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: RDS master password (min 8 characters)
+
+Resources:
+  #============================================================================
+  # S3 Buckets
+  #============================================================================
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-raw-data-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+          - Id: TransitionToGlacier
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+          - Id: DeleteOldData
+            Status: Enabled
+            ExpirationInDays: 365
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  ProcessedDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-processed-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  #============================================================================
+  # DynamoDB Tables
+  #============================================================================
+  ErrorStoreTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-error-store'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: error_id
+          AttributeType: S
+        - AttributeName: agent_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+        - AttributeName: error_type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: error_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-timestamp-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: agent-error-type-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: error_type
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  AlertCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-alert-cache'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: alert_fingerprint
+          AttributeType: S
+      KeySchema:
+        - AttributeName: alert_fingerprint
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  AgentMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-agent-metadata'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: agent_id
+          AttributeType: S
+        - AttributeName: team_name
+          AttributeType: S
+      KeySchema:
+        - AttributeName: agent_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: team-index
+          KeySchema:
+            - AttributeName: team_name
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  InvestigationResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-investigation-results'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: investigation_id
+          AttributeType: S
+        - AttributeName: agent_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: investigation_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: agent-timestamp-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  #============================================================================
+  # Amazon Timestream (Metrics)
+  #============================================================================
+  TimestreamDatabase:
+    Type: AWS::Timestream::Database
+    Properties:
+      DatabaseName: !Sub '${ProjectName}-${Environment}'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  LatencyMetricsTable:
+    Type: AWS::Timestream::Table
+    Properties:
+      DatabaseName: !Ref TimestreamDatabase
+      TableName: latency-metrics
+      RetentionProperties:
+        MemoryStoreRetentionPeriodInHours: '24'
+        MagneticStoreRetentionPeriodInDays: '365'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  TokenMetricsTable:
+    Type: AWS::Timestream::Table
+    Properties:
+      DatabaseName: !Ref TimestreamDatabase
+      TableName: token-metrics
+      RetentionProperties:
+        MemoryStoreRetentionPeriodInHours: '24'
+        MagneticStoreRetentionPeriodInDays: '365'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  CostMetricsTable:
+    Type: AWS::Timestream::Table
+    Properties:
+      DatabaseName: !Ref TimestreamDatabase
+      TableName: cost-metrics
+      RetentionProperties:
+        MemoryStoreRetentionPeriodInHours: '24'
+        MagneticStoreRetentionPeriodInDays: '365'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  CustomMetricsTable:
+    Type: AWS::Timestream::Table
+    Properties:
+      DatabaseName: !Ref TimestreamDatabase
+      TableName: custom-metrics
+      RetentionProperties:
+        MemoryStoreRetentionPeriodInHours: '24'
+        MagneticStoreRetentionPeriodInDays: '365'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  #============================================================================
+  # OpenSearch Serverless (Traces and Logs)
+  #============================================================================
+  OpenSearchCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    DependsOn:
+      - OpenSearchEncryptionPolicy
+      - OpenSearchNetworkPolicy
+      - OpenSearchDataAccessPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}'
+      Description: GenAI Observability traces and logs
+      Type: TIMESERIES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  OpenSearchEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-encryption'
+      Type: encryption
+      Description: Encryption policy for observability collection
+      Policy: !Sub |
+        {
+          "Rules": [
+            {
+              "ResourceType": "collection",
+              "Resource": ["collection/${ProjectName}-${Environment}"]
+            }
+          ],
+          "AWSOwnedKey": true
+        }
+
+  OpenSearchNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-network'
+      Type: network
+      Description: Network policy for observability collection
+      Policy: !Sub |
+        [
+          {
+            "Rules": [
+              {
+                "ResourceType": "collection",
+                "Resource": ["collection/${ProjectName}-${Environment}"]
+              },
+              {
+                "ResourceType": "dashboard",
+                "Resource": ["collection/${ProjectName}-${Environment}"]
+              }
+            ],
+            "AllowFromPublic": true
+          }
+        ]
+
+  OpenSearchDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-access'
+      Type: data
+      Description: Data access policy for observability collection
+      Policy: !Sub |
+        [
+          {
+            "Rules": [
+              {
+                "ResourceType": "collection",
+                "Resource": ["collection/${ProjectName}-${Environment}"],
+                "Permission": [
+                  "aoss:CreateCollectionItems",
+                  "aoss:DeleteCollectionItems",
+                  "aoss:UpdateCollectionItems",
+                  "aoss:DescribeCollectionItems"
+                ]
+              },
+              {
+                "ResourceType": "index",
+                "Resource": ["index/${ProjectName}-${Environment}/*"],
+                "Permission": [
+                  "aoss:CreateIndex",
+                  "aoss:DeleteIndex",
+                  "aoss:UpdateIndex",
+                  "aoss:DescribeIndex",
+                  "aoss:ReadDocument",
+                  "aoss:WriteDocument"
+                ]
+              }
+            ],
+            "Principal": [
+              "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-role"
+            ]
+          }
+        ]
+
+  #============================================================================
+  # RDS Aurora PostgreSQL (Configuration Database)
+  #============================================================================
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-PrivateSubnet1Id'
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-PrivateSubnet2Id'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  RDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: !Sub '${ProjectName}-${Environment}-cluster'
+      Engine: aurora-postgresql
+      EngineVersion: '15.4'
+      EngineMode: provisioned
+      DatabaseName: observability
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VpcSecurityGroupIds:
+        - Fn::ImportValue: !Sub '${ProjectName}-${Environment}-RDSSecurityGroupId'
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 4
+      EnableHttpEndpoint: true
+      StorageEncrypted: true
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${ProjectName}-${Environment}-instance-1'
+      DBClusterIdentifier: !Ref RDSCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Store RDS credentials in Secrets Manager
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ProjectName}/${Environment}/rds-credentials'
+      Description: RDS credentials for observability database
+      SecretString: !Sub |
+        {
+          "username": "${DBMasterUsername}",
+          "password": "${DBMasterPassword}",
+          "host": "${RDSCluster.Endpoint.Address}",
+          "port": "${RDSCluster.Endpoint.Port}",
+          "database": "observability"
+        }
+
+Outputs:
+  RawDataBucketName:
+    Description: Raw data S3 bucket name
+    Value: !Ref RawDataBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-RawDataBucketName'
+
+  ProcessedDataBucketName:
+    Description: Processed data S3 bucket name
+    Value: !Ref ProcessedDataBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ProcessedDataBucketName'
+
+  ErrorStoreTableName:
+    Description: Error store DynamoDB table name
+    Value: !Ref ErrorStoreTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ErrorStoreTableName'
+
+  AlertCacheTableName:
+    Description: Alert cache DynamoDB table name
+    Value: !Ref AlertCacheTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AlertCacheTableName'
+
+  AgentMetadataTableName:
+    Description: Agent metadata DynamoDB table name
+    Value: !Ref AgentMetadataTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-AgentMetadataTableName'
+
+  InvestigationResultsTableName:
+    Description: Investigation results DynamoDB table name
+    Value: !Ref InvestigationResultsTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-InvestigationResultsTableName'
+
+  TimestreamDatabaseName:
+    Description: Timestream database name
+    Value: !Ref TimestreamDatabase
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-TimestreamDatabaseName'
+
+  OpenSearchCollectionEndpoint:
+    Description: OpenSearch collection endpoint
+    Value: !GetAtt OpenSearchCollection.CollectionEndpoint
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-OpenSearchEndpoint'
+
+  OpenSearchCollectionArn:
+    Description: OpenSearch collection ARN
+    Value: !GetAtt OpenSearchCollection.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-OpenSearchArn'
+
+  RDSClusterEndpoint:
+    Description: RDS cluster endpoint
+    Value: !GetAtt RDSCluster.Endpoint.Address
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-RDSEndpoint'
+
+  RDSSecretArn:
+    Description: RDS credentials secret ARN
+    Value: !Ref RDSSecret
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-RDSSecretArn'

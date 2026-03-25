@@ -1,0 +1,7 @@
+# Example Agent Dependencies
+genai-observability>=0.1.0
+
+# For real LLM integration (uncomment as needed)
+# anthropic>=0.18.0
+# openai>=1.12.0
+# langchain>=0.1.0

@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Main Stack (Nested Stacks Orchestration)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+
+  ProjectName:
+    Type: String
+    Default: genai-observability
+    Description: Project name for resource naming
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+
+  DBMasterUsername:
+    Type: String
+    Default: obsadmin
+    NoEcho: true
+    Description: RDS master username
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: RDS master password (min 8 characters)
+
+  KinesisShardCount:
+    Type: Number
+    Default: 2
+    Description: Number of Kinesis shards
+
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Email address for alert notifications (optional)
+
+  TeamsWebhookUrl:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Microsoft Teams webhook URL (optional)
+
+  SenderEmail:
+    Type: String
+    Default: ''
+    Description: SES verified email for sending alerts (optional)
+
+  CognitoDomainPrefix:
+    Type: String
+    Default: genai-observability
+    Description: Cognito hosted UI domain prefix
+
+  CallbackURLs:
+    Type: CommaDelimitedList
+    Default: 'http://localhost:3000/auth/callback'
+    Description: OAuth callback URLs
+
+  TemplatesBucketName:
+    Type: String
+    Description: S3 bucket containing nested stack templates
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment Configuration"
+        Parameters:
+          - Environment
+          - ProjectName
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCidr
+      - Label:
+          default: "Database Configuration"
+        Parameters:
+          - DBMasterUsername
+          - DBMasterPassword
+      - Label:
+          default: "Scaling Configuration"
+        Parameters:
+          - KinesisShardCount
+      - Label:
+          default: "Notifications"
+        Parameters:
+          - AlertEmail
+      - Label:
+          default: "Deployment"
+        Parameters:
+          - TemplatesBucketName
+
+Resources:
+  #============================================================================
+  # Core Infrastructure (VPC, IAM, Security Groups)
+  #============================================================================
+  CoreStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/core.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        VpcCidr: !Ref VpcCidr
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # Storage Infrastructure (S3, DynamoDB, Timestream, OpenSearch, RDS)
+  #============================================================================
+  StorageStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CoreStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/storage.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        DBMasterUsername: !Ref DBMasterUsername
+        DBMasterPassword: !Ref DBMasterPassword
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # Ingestion Infrastructure (API Gateway, Kinesis, Ingestion Lambda)
+  #============================================================================
+  IngestionStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: StorageStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/ingestion.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        KinesisShardCount: !Ref KinesisShardCount
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # Notification Infrastructure (SNS, Formatters)
+  #============================================================================
+  NotificationStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CoreStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/notifications.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        AlertEmail: !Ref AlertEmail
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # Processing Infrastructure (Stream Processor, Anomaly Detection, LLM)
+  #============================================================================
+  ProcessingStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - StorageStack
+      - IngestionStack
+      - NotificationStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/processing.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # Batch Processing Infrastructure (Step Functions, Glue ETL)
+  #============================================================================
+  BatchProcessingStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - StorageStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/batch-processing.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        S3BucketName: !GetAtt StorageStack.Outputs.DataBucketName
+        RDSEndpoint: !GetAtt StorageStack.Outputs.RDSClusterEndpoint
+        RDSSecretArn: !GetAtt StorageStack.Outputs.RDSSecretArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # Authentication Infrastructure (Cognito)
+  #============================================================================
+  AuthenticationStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CoreStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/authentication.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        CallbackURLs: !Join [',', !Ref CallbackURLs]
+        DomainPrefix: !Ref CognitoDomainPrefix
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  #============================================================================
+  # WebSocket API Infrastructure (Real-time updates)
+  #============================================================================
+  WebSocketStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - CoreStack
+      - AuthenticationStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/infrastructure/websocket-api.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        CognitoUserPoolArn: !GetAtt AuthenticationStack.Outputs.UserPoolArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL for SDK
+    Value: !GetAtt IngestionStack.Outputs.ApiEndpoint
+
+  OpenSearchEndpoint:
+    Description: OpenSearch endpoint for traces
+    Value: !GetAtt StorageStack.Outputs.OpenSearchCollectionEndpoint
+
+  RDSEndpoint:
+    Description: RDS cluster endpoint
+    Value: !GetAtt StorageStack.Outputs.RDSClusterEndpoint
+
+  CriticalAlertsTopicArn:
+    Description: SNS topic for critical alerts
+    Value: !GetAtt NotificationStack.Outputs.CriticalAlertsTopicArn
+
+  Environment:
+    Description: Deployment environment
+    Value: !Ref Environment
+
+  ProjectName:
+    Description: Project name
+    Value: !Ref ProjectName
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !GetAtt AuthenticationStack.Outputs.UserPoolId
+
+  CognitoClientId:
+    Description: Cognito Web Client ID
+    Value: !GetAtt AuthenticationStack.Outputs.UserPoolClientIdWeb
+
+  CognitoDomain:
+    Description: Cognito Hosted UI Domain
+    Value: !GetAtt AuthenticationStack.Outputs.CognitoDomain
+
+  WebSocketEndpoint:
+    Description: WebSocket API endpoint for real-time updates
+    Value: !GetAtt WebSocketStack.Outputs.WebSocketURL
+
+  DailyPipelineArn:
+    Description: Step Functions daily pipeline ARN
+    Value: !GetAtt BatchProcessingStack.Outputs.DailyPipelineStateMachineArn

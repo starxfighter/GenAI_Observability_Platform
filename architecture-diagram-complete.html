@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GenAI Observability Platform - Enhanced Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.95;
+        }
+
+        .controls {
+            background: #f7fafc;
+            padding: 20px;
+            border-bottom: 2px solid #e2e8f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #4a5568;
+            border: 2px solid #e2e8f0;
+        }
+
+        .btn-secondary:hover {
+            border-color: #cbd5e0;
+            background: #f7fafc;
+        }
+
+        .zoom-indicator {
+            padding: 8px 16px;
+            background: white;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #4a5568;
+            border: 2px solid #e2e8f0;
+        }
+
+        .svg-container {
+            background: #f7fafc;
+            overflow: auto;
+            position: relative;
+            height: calc(100vh - 250px);
+            min-height: 600px;
+        }
+
+        .svg-wrapper {
+            display: inline-block;
+            transform-origin: top left;
+            transition: transform 0.2s ease-out;
+        }
+
+        svg {
+            display: block;
+            max-width: none;
+        }
+
+        .instructions {
+            background: #edf2f7;
+            padding: 15px 30px;
+            border-top: 2px solid #cbd5e0;
+            text-align: center;
+            font-size: 14px;
+            color: #4a5568;
+        }
+
+        .instructions strong {
+            color: #2d3748;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .controls {
+                padding: 15px;
+            }
+
+            .btn {
+                padding: 8px 16px;
+                font-size: 13px;
+            }
+        }
+
+        .download-section {
+            background: #fff;
+            padding: 20px 30px;
+            border-top: 2px solid #e2e8f0;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .info-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: #ebf4ff;
+            color: #2c5282;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .info-badge svg {
+            width: 16px;
+            height: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 GenAI Observability Platform</h1>
+            <p>Enhanced Architecture with AI Intelligence, Smart Notifications & Self-Service Portal</p>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-primary" onclick="zoomIn()">
+                <span>🔍</span> Zoom In
+            </button>
+            <button class="btn btn-primary" onclick="zoomOut()">
+                <span>🔍</span> Zoom Out
+            </button>
+            <button class="btn btn-secondary" onclick="resetZoom()">
+                <span>↺</span> Reset
+            </button>
+            <button class="btn btn-secondary" onclick="fitToScreen()">
+                <span>⛶</span> Fit to Screen
+            </button>
+            <div class="zoom-indicator" id="zoomLevel">100%</div>
+        </div>
+
+        <div class="svg-container" id="svgContainer">
+            <div class="svg-wrapper" id="svgWrapper">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="2600" height="3600" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <!-- Define gradients and styles -->
+    <linearGradient id="headerGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="layer1Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4299e1;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#4299e1;stop-opacity:0.1" />
+    </linearGradient>
+    
+    <linearGradient id="layer2Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#48bb78;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#48bb78;stop-opacity:0.1" />
+    </linearGradient>
+    
+    <linearGradient id="layer3Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ed8936;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#ed8936;stop-opacity:0.1" />
+    </linearGradient>
+    
+    <linearGradient id="layer4Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#9f7aea;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#9f7aea;stop-opacity:0.1" />
+    </linearGradient>
+    
+    <linearGradient id="layer5Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f56565;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#f56565;stop-opacity:0.1" />
+    </linearGradient>
+    
+    <linearGradient id="layer6Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#38b2ac;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#38b2ac;stop-opacity:0.1" />
+    </linearGradient>
+    
+    <linearGradient id="llmGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#d946ef;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:0.3" />
+    </linearGradient>
+    
+    <linearGradient id="portalGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#0891b2;stop-opacity:0.3" />
+    </linearGradient>
+    
+    <!-- Arrow markers -->
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#4a5568" />
+    </marker>
+    
+    <marker id="dataArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#667eea" />
+    </marker>
+    
+    <marker id="alertArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#f56565" />
+    </marker>
+    
+    <marker id="llmArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#d946ef" />
+    </marker>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="2600" height="3600" fill="#f7fafc"/>
+  
+  <!-- Title Section -->
+  <rect x="0" y="0" width="2600" height="100" fill="url(#headerGradient)"/>
+  <text x="1300" y="40" font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="white" text-anchor="middle">
+    GenAI Observability Platform - Enhanced Architecture with AI Intelligence
+  </text>
+  <text x="1300" y="75" font-family="Arial, sans-serif" font-size="18" fill="white" text-anchor="middle">
+    End-to-End Monitoring + LLM-Powered Analysis + Smart Notifications + Self-Service Portal
+  </text>
+  
+  <!-- Legend -->
+  <g id="legend">
+    <rect x="50" y="120" width="550" height="200" fill="white" stroke="#cbd5e0" stroke-width="2" rx="8"/>
+    <text x="325" y="150" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle">Legend</text>
+    
+    <rect x="70" y="165" width="30" height="20" fill="#4299e1" opacity="0.3"/>
+    <text x="110" y="180" font-family="Arial, sans-serif" font-size="13">Data Collection (Client-side)</text>
+    
+    <rect x="70" y="195" width="30" height="20" fill="#48bb78" opacity="0.3"/>
+    <text x="110" y="210" font-family="Arial, sans-serif" font-size="13">Ingestion Layer</text>
+    
+    <rect x="70" y="225" width="30" height="20" fill="#ed8936" opacity="0.3"/>
+    <text x="110" y="240" font-family="Arial, sans-serif" font-size="13">Storage Layer</text>
+    
+    <rect x="70" y="255" width="30" height="20" fill="#9f7aea" opacity="0.3"/>
+    <text x="110" y="270" font-family="Arial, sans-serif" font-size="13">Processing Layer</text>
+    
+    <rect x="70" y="285" width="30" height="20" fill="#d946ef" opacity="0.3"/>
+    <text x="110" y="300" font-family="Arial, sans-serif" font-size="13">LLM-Powered Intelligence</text>
+    
+    <line x1="330" y1="165" x2="360" y2="165" stroke="#667eea" stroke-width="3" marker-end="url(#dataArrow)"/>
+    <text x="370" y="170" font-family="Arial, sans-serif" font-size="13">Data Flow</text>
+    
+    <line x1="330" y1="195" x2="360" y2="195" stroke="#f56565" stroke-width="3" marker-end="url(#alertArrow)"/>
+    <text x="370" y="200" font-family="Arial, sans-serif" font-size="13">Alert Flow</text>
+    
+    <line x1="330" y1="225" x2="360" y2="225" stroke="#d946ef" stroke-width="3" marker-end="url(#llmArrow)"/>
+    <text x="370" y="230" font-family="Arial, sans-serif" font-size="13">LLM Analysis</text>
+    
+    <circle cx="345" cy="265" r="12" fill="#fbbf24" stroke="#f59e0b" stroke-width="2"/>
+    <text x="370" y="270" font-family="Arial, sans-serif" font-size="13">NEW: Enhanced Feature</text>
+  </g>
+  
+  <!-- NEW: Registration Portal Section -->
+  <g id="registration-portal">
+    <rect x="650" y="120" width="600" height="200" fill="url(#portalGradient)" stroke="#06b6d4" stroke-width="3" rx="8"/>
+    <circle cx="950" cy="160" r="15" fill="#fbbf24" stroke="#f59e0b" stroke-width="2"/>
+    <text x="980" y="166" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#164e63">NEW</text>
+    <text x="950" y="145" font-family="Arial, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#164e63">
+      Agent/MCP Registration Portal
+    </text>
+    
+    <rect x="670" y="175" width="560" height="130" fill="white" stroke="#0891b2" stroke-width="1" rx="5"/>
+    <text x="680" y="195" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0e7490">Self-Service Portal Features:</text>
+    <text x="690" y="213" font-family="Arial, sans-serif" font-size="10" fill="#155e75">• Register new agents & MCP servers | Configure monitoring</text>
+    <text x="690" y="228" font-family="Arial, sans-serif" font-size="10" fill="#155e75">• Generate API keys & credentials | View health checks</text>
+    <text x="690" y="243" font-family="Arial, sans-serif" font-size="10" fill="#155e75">• LLM-assisted configuration wizard | Validate setups</text>
+    <text x="690" y="258" font-family="Arial, sans-serif" font-size="10" fill="#155e75">• Documentation generator | Cost estimator</text>
+    <text x="690" y="273" font-family="Arial, sans-serif" font-size="10" fill="#155e75">• Team management | Access control (RBAC)</text>
+    <text x="690" y="288" font-family="Arial, sans-serif" font-size="10" fill="#155e75">• SDK download center | Integration testing</text>
+  </g>
+  
+  <!-- LAYER 1: DATA COLLECTION LAYER -->
+  <g id="layer1">
+    <rect x="50" y="350" width="2500" height="480" fill="url(#layer1Gradient)" stroke="#4299e1" stroke-width="3" rx="10"/>
+    <text x="100" y="390" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#2c5282">
+      Layer 1: Data Collection Layer (Installed in Your Applications)
+    </text>
+    
+    <!-- Lambda Functions -->
+    <g id="lambda-section">
+      <rect x="100" y="420" width="360" height="370" fill="white" stroke="#4299e1" stroke-width="2" rx="8"/>
+      <text x="280" y="450" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">AWS Lambda</text>
+      
+      <rect x="120" y="465" width="320" height="70" fill="#edf2f7" stroke="#4299e1" stroke-width="1" rx="5"/>
+      <text x="280" y="485" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">Your Agent Code</text>
+      <text x="280" y="503" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">LangChain/CrewAI/Custom</text>
+      <text x="280" y="518" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">Python 3.11</text>
+      
+      <line x1="280" y1="535" x2="280" y2="555" stroke="#667eea" stroke-width="2" marker-end="url(#dataArrow)"/>
+      
+      <rect x="120" y="555" width="320" height="85" fill="#e6fffa" stroke="#319795" stroke-width="2" rx="5"/>
+      <text x="280" y="575" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#234e52">Observability SDK</text>
+      <text x="130" y="593" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• AgentObservability</text>
+      <text x="130" y="608" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Auto error capture</text>
+      <text x="130" y="623" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Stack trace logging</text>
+      
+      <rect x="130" y="655" width="300" height="45" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="4"/>
+      <text x="280" y="673" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#744210">Install: Lambda Layer</text>
+      <text x="280" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#744210">requirements.txt</text>
+      
+      <text x="130" y="720" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">Env: OBSERVABILITY_API</text>
+      <text x="130" y="735" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">AGENT_ID=sales-agent</text>
+      <text x="130" y="750" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">ERROR_TRACKING=enabled</text>
+      
+      <text x="130" y="775" font-family="Arial, sans-serif" font-size="9" font-style="italic" fill="#667eea">→ Registered via Portal</text>
+    </g>
+    
+    <!-- ECS Containers -->
+    <g id="ecs-section">
+      <rect x="500" y="420" width="360" height="370" fill="white" stroke="#4299e1" stroke-width="2" rx="8"/>
+      <text x="680" y="450" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">ECS/Fargate</text>
+      
+      <rect x="520" y="465" width="320" height="70" fill="#edf2f7" stroke="#4299e1" stroke-width="1" rx="5"/>
+      <text x="680" y="485" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">Agent Service</text>
+      <text x="680" y="503" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">Docker Container</text>
+      <text x="680" y="518" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">Multi-threaded</text>
+      
+      <line x1="680" y1="535" x2="680" y2="555" stroke="#667eea" stroke-width="2" marker-end="url(#dataArrow)"/>
+      
+      <rect x="520" y="555" width="320" height="85" fill="#e6fffa" stroke="#319795" stroke-width="2" rx="5"/>
+      <text x="680" y="575" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#234e52">Observability SDK</text>
+      <text x="530" y="593" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• MCPInterceptor</text>
+      <text x="530" y="608" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• BedrockWrapper</text>
+      <text x="530" y="623" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Error context capture</text>
+      
+      <rect x="530" y="655" width="300" height="45" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="4"/>
+      <text x="680" y="673" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#744210">Install: Dockerfile</text>
+      <text x="680" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#744210">pip install genai-obs-sdk</text>
+      
+      <text x="530" y="720" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">Task Def: Environment vars</text>
+      <text x="530" y="735" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">image: genai-agent:v1.0</text>
+      <text x="530" y="750" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">cpu: 2048, memory: 4096</text>
+      
+      <text x="530" y="775" font-family="Arial, sans-serif" font-size="9" font-style="italic" fill="#667eea">→ Registered via Portal</text>
+    </g>
+    
+    <!-- EC2/K8s -->
+    <g id="ec2-section">
+      <rect x="900" y="420" width="360" height="370" fill="white" stroke="#4299e1" stroke-width="2" rx="8"/>
+      <text x="1080" y="450" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">EC2/Kubernetes</text>
+      
+      <rect x="920" y="465" width="320" height="70" fill="#edf2f7" stroke="#4299e1" stroke-width="1" rx="5"/>
+      <text x="1080" y="485" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">Agent Application</text>
+      <text x="1080" y="503" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">Flask/FastAPI</text>
+      <text x="1080" y="518" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">K8s Deployment</text>
+      
+      <line x1="1080" y1="535" x2="1080" y2="555" stroke="#667eea" stroke-width="2" marker-end="url(#dataArrow)"/>
+      
+      <rect x="920" y="555" width="320" height="85" fill="#e6fffa" stroke="#319795" stroke-width="2" rx="5"/>
+      <text x="1080" y="575" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#234e52">Observability SDK</text>
+      <text x="930" y="593" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• OpenTelemetry compatible</text>
+      <text x="930" y="608" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Exception tracking</text>
+      <text x="930" y="623" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Health check endpoint</text>
+      
+      <rect x="930" y="655" width="300" height="45" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="4"/>
+      <text x="1080" y="673" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#744210">Install: pip/poetry</text>
+      <text x="1080" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#744210">K8s ConfigMap</text>
+      
+      <text x="930" y="720" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">ConfigMap: observability-cfg</text>
+      <text x="930" y="735" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">api-endpoint: https://...</text>
+      <text x="930" y="750" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">sampling-rate: 1.0</text>
+      
+      <text x="930" y="775" font-family="Arial, sans-serif" font-size="9" font-style="italic" fill="#667eea">→ Registered via Portal</text>
+    </g>
+    
+    <!-- MCP Servers -->
+    <g id="mcp-section">
+      <rect x="1300" y="420" width="360" height="370" fill="white" stroke="#4299e1" stroke-width="2" rx="8"/>
+      <text x="1480" y="450" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">MCP Servers</text>
+      
+      <rect x="1320" y="465" width="320" height="70" fill="#edf2f7" stroke="#4299e1" stroke-width="1" rx="5"/>
+      <text x="1480" y="485" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">MCP Server Impl</text>
+      <text x="1480" y="503" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">DB/API/Tool Server</text>
+      <text x="1480" y="518" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">HTTP or SSE</text>
+      
+      <line x1="1480" y1="535" x2="1480" y2="555" stroke="#667eea" stroke-width="2" marker-end="url(#dataArrow)"/>
+      
+      <rect x="1320" y="555" width="320" height="85" fill="#e6fffa" stroke="#319795" stroke-width="2" rx="5"/>
+      <text x="1480" y="575" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#234e52">MCP Interceptor</text>
+      <text x="1330" y="593" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• @intercept_mcp_server</text>
+      <text x="1330" y="608" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Error tracking</text>
+      <text x="1330" y="623" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Connection monitoring</text>
+      
+      <rect x="1330" y="655" width="300" height="45" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="4"/>
+      <text x="1480" y="673" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#744210">Install: Middleware</text>
+      <text x="1480" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#744210">Server-side decorator</text>
+      
+      <text x="1330" y="720" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">MCP Config:</text>
+      <text x="1330" y="735" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">server_name: db-server</text>
+      <text x="1330" y="750" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">transport: http, port: 3000</text>
+      
+      <text x="1330" y="775" font-family="Arial, sans-serif" font-size="9" font-style="italic" fill="#667eea">→ Registered via Portal</text>
+    </g>
+    
+    <!-- SageMaker -->
+    <g id="sagemaker-section">
+      <rect x="1700" y="420" width="360" height="370" fill="white" stroke="#4299e1" stroke-width="2" rx="8"/>
+      <text x="1880" y="450" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">SageMaker</text>
+      
+      <rect x="1720" y="465" width="320" height="70" fill="#edf2f7" stroke="#4299e1" stroke-width="1" rx="5"/>
+      <text x="1880" y="485" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle">Training/Inference</text>
+      <text x="1880" y="503" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">Jupyter Notebooks</text>
+      <text x="1880" y="518" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#4a5568">Model Experiments</text>
+      
+      <line x1="1880" y1="535" x2="1880" y2="555" stroke="#667eea" stroke-width="2" marker-end="url(#dataArrow)"/>
+      
+      <rect x="1720" y="555" width="320" height="85" fill="#e6fffa" stroke="#319795" stroke-width="2" rx="5"/>
+      <text x="1880" y="575" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#234e52">Observability SDK</text>
+      <text x="1730" y="593" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Experiment tracking</text>
+      <text x="1730" y="608" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• Model performance</text>
+      <text x="1730" y="623" font-family="Arial, sans-serif" font-size="10" fill="#2c7a7b">• A/B test tracking</text>
+      
+      <rect x="1730" y="655" width="300" height="45" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="4"/>
+      <text x="1880" y="673" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#744210">Install: !pip install</text>
+      <text x="1880" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#744210">In notebook cell</text>
+      
+      <text x="1730" y="720" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">Notebook:</text>
+      <text x="1730" y="735" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">!pip install genai-obs-sdk</text>
+      <text x="1730" y="750" font-family="Arial, sans-serif" font-size="9" fill="#4a5568">obs = AgentObservability()</text>
+      
+      <text x="1730" y="775" font-family="Arial, sans-serif" font-size="9" font-style="italic" fill="#667eea">→ Registered via Portal</text>
+    </g>
+    
+    <!-- Portal Connection Line -->
+    <line x1="950" y1="320" x2="1300" y2="420" stroke="#06b6d4" stroke-width="3" stroke-dasharray="8,4" opacity="0.6"/>
+    <text x="1100" y="360" font-family="Arial, sans-serif" font-size="11" fill="#0891b2" font-weight="bold">Register agents/MCP servers</text>
+  </g>
+  
+  <!-- Data Flow Arrow -->
+  <line x1="1300" y1="830" x2="1300" y2="880" stroke="#667eea" stroke-width="4" marker-end="url(#dataArrow)"/>
+  <text x="1350" y="860" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#667eea">HTTPS POST + Errors</text>
+  
+  <!-- LAYER 2: INGESTION LAYER -->
+  <g id="layer2">
+    <rect x="50" y="900" width="2500" height="340" fill="url(#layer2Gradient)" stroke="#48bb78" stroke-width="3" rx="10"/>
+    <text x="100" y="940" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#22543d">
+      Layer 2: Ingestion Layer (AWS Services)
+    </text>
+    
+    <!-- API Gateway -->
+    <rect x="150" y="970" width="280" height="230" fill="white" stroke="#48bb78" stroke-width="2" rx="8"/>
+    <text x="290" y="1000" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">API Gateway</text>
+    
+    <rect x="170" y="1015" width="240" height="55" fill="#c6f6d5" stroke="#38a169" stroke-width="1" rx="5"/>
+    <text x="290" y="1035" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">HTTP API v2</text>
+    <text x="180" y="1053" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• /events endpoint</text>
+    <text x="180" y="1065" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Rate limit: 10K/sec</text>
+    
+    <rect x="170" y="1080" width="240" height="55" fill="#fed7d7" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="290" y="1098" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">Auth</text>
+    <text x="180" y="1115" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• API Key (from Portal)</text>
+    <text x="180" y="1127" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• IAM authorization</text>
+    
+    <text x="170" y="1155" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Cost: ~$1/M req</text>
+    <text x="170" y="1170" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Latency: ~50ms</text>
+    <text x="170" y="1185" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Keys managed by Portal</text>
+    
+    <line x1="430" y1="1085" x2="490" y2="1085" stroke="#667eea" stroke-width="3" marker-end="url(#dataArrow)"/>
+    
+    <!-- Lambda Ingestion -->
+    <rect x="490" y="970" width="320" height="230" fill="white" stroke="#48bb78" stroke-width="2" rx="8"/>
+    <text x="650" y="1000" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">Ingestion Lambda</text>
+    
+    <rect x="510" y="1015" width="280" height="90" fill="#fef5e7" stroke="#dd6b20" stroke-width="1" rx="5"/>
+    <text x="650" y="1033" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#744210">Event Processing</text>
+    <text x="520" y="1050" font-family="Arial, sans-serif" font-size="9" fill="#7c2d12">• Validate schema</text>
+    <text x="520" y="1063" font-family="Arial, sans-serif" font-size="9" fill="#7c2d12">• Enrich metadata</text>
+    <text x="520" y="1076" font-family="Arial, sans-serif" font-size="9" fill="#7c2d12">• Error categorization</text>
+    <text x="520" y="1089" font-family="Arial, sans-serif" font-size="9" fill="#7c2d12">• Stack trace parsing</text>
+    
+    <rect x="510" y="1115" width="280" height="35" fill="#e6fffa" stroke="#319795" stroke-width="1" rx="5"/>
+    <text x="520" y="1133" font-family="Arial, sans-serif" font-size="9" fill="#234e52">Runtime: Python 3.11</text>
+    <text x="520" y="1145" font-family="Arial, sans-serif" font-size="9" fill="#234e52">Memory: 512MB | Timeout: 15s</text>
+    
+    <text x="510" y="1170" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Concurrency: 1000</text>
+    <text x="510" y="1185" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Cost: ~$0.20/M req</text>
+    
+    <line x1="810" y1="1085" x2="870" y2="1085" stroke="#667eea" stroke-width="3" marker-end="url(#dataArrow)"/>
+    
+    <!-- Kinesis -->
+    <rect x="870" y="970" width="300" height="230" fill="white" stroke="#48bb78" stroke-width="2" rx="8"/>
+    <text x="1020" y="1000" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">Kinesis Streams</text>
+    
+    <rect x="890" y="1015" width="260" height="75" fill="#e0e7ff" stroke="#667eea" stroke-width="1" rx="5"/>
+    <text x="1020" y="1033" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Event Streaming</text>
+    <text x="900" y="1050" font-family="Arial, sans-serif" font-size="9" fill="#434190">• 5 shards (25MB/sec)</text>
+    <text x="900" y="1063" font-family="Arial, sans-serif" font-size="9" fill="#434190">• 7-day retention</text>
+    <text x="900" y="1076" font-family="Arial, sans-serif" font-size="9" fill="#434190">• Fan-out consumers</text>
+    
+    <rect x="890" y="1100" width="260" height="50" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="5"/>
+    <text x="1020" y="1118" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#744210">Partition</text>
+    <text x="900" y="1135" font-family="Arial, sans-serif" font-size="9" fill="#7c2d12">Key: execution_id</text>
+    <text x="900" y="1147" font-family="Arial, sans-serif" font-size="9" fill="#7c2d12">Ordered events</text>
+    
+    <text x="890" y="1175" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Throughput: 25MB/sec</text>
+    <text x="890" y="1190" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Cost: ~$50/month/shard</text>
+    
+    <line x1="1170" y1="1085" x2="1230" y2="1085" stroke="#667eea" stroke-width="3" marker-end="url(#dataArrow)"/>
+    
+    <!-- Firehose -->
+    <rect x="1230" y="970" width="340" height="230" fill="white" stroke="#48bb78" stroke-width="2" rx="8"/>
+    <text x="1400" y="1000" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">Kinesis Firehose</text>
+    
+    <rect x="1250" y="1015" width="300" height="90" fill="#c6f6d5" stroke="#38a169" stroke-width="1" rx="5"/>
+    <text x="1400" y="1033" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Data Delivery</text>
+    <text x="1260" y="1050" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Buffer: 128MB/5min</text>
+    <text x="1260" y="1063" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• GZIP compression</text>
+    <text x="1260" y="1076" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Parquet conversion</text>
+    <text x="1260" y="1089" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Dynamic partition</text>
+    
+    <rect x="1250" y="1115" width="300" height="35" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="5"/>
+    <text x="1260" y="1133" font-family="Arial, sans-serif" font-size="9" fill="#744210">Partition: year/month/day/hour</text>
+    <text x="1260" y="1145" font-family="Arial, sans-serif" font-size="9" fill="#744210">Format: Parquet Snappy</text>
+    
+    <text x="1250" y="1170" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Latency: ~60 sec</text>
+    <text x="1250" y="1185" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Cost: $0.029/GB</text>
+    
+    <!-- DynamoDB Hot Path -->
+    <line x1="650" y1="1200" x2="650" y2="1260" stroke="#667eea" stroke-width="3" marker-end="url(#dataArrow)" stroke-dasharray="5,5"/>
+    <text x="660" y="1230" font-family="Arial, sans-serif" font-size="10" fill="#667eea">Hot data</text>
+    
+    <rect x="1620" y="970" width="430" height="230" fill="white" stroke="#48bb78" stroke-width="2" rx="8"/>
+    <text x="1835" y="1000" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">DynamoDB (Hot)</text>
+    
+    <rect x="1640" y="1015" width="390" height="80" fill="#fef5e7" stroke="#d69e2e" stroke-width="1" rx="5"/>
+    <text x="1835" y="1033" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Active Executions</text>
+    <text x="1650" y="1050" font-family="Arial, sans-serif" font-size="9" fill="#744210">• Real-time query (&lt;10ms)</text>
+    <text x="1650" y="1063" font-family="Arial, sans-serif" font-size="9" fill="#744210">• TTL: 24 hours</text>
+    <text x="1650" y="1076" font-family="Arial, sans-serif" font-size="9" fill="#744210">• GSI: agent-timestamp-idx</text>
+    <text x="1650" y="1089" font-family="Arial, sans-serif" font-size="9" fill="#744210">• Error state tracking</text>
+    
+    <rect x="1640" y="1105" width="390" height="45" fill="#e6fffa" stroke="#319795" stroke-width="1" rx="5"/>
+    <text x="1650" y="1123" font-family="Arial, sans-serif" font-size="9" fill="#234e52">PK: execution_id | SK: timestamp</text>
+    <text x="1650" y="1138" font-family="Arial, sans-serif" font-size="9" fill="#234e52">Billing: On-demand mode</text>
+    
+    <text x="1640" y="1170" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Capacity: Auto-scaling</text>
+    <text x="1640" y="1185" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Cost: $1.25/M writes</text>
+  </g>
+  
+  <!-- Data Flow Arrow -->
+  <line x1="1300" y1="1240" x2="1300" y2="1290" stroke="#667eea" stroke-width="4" marker-end="url(#dataArrow)"/>
+  <text x="1350" y="1270" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#667eea">Multiple paths</text>
+  
+  <!-- LAYER 3: STORAGE LAYER -->
+  <g id="layer3">
+    <rect x="50" y="1310" width="2500" height="330" fill="url(#layer3Gradient)" stroke="#ed8936" stroke-width="3" rx="10"/>
+    <text x="100" y="1350" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#7c2d12">
+      Layer 3: Storage Layer (Multi-Store Architecture)
+    </text>
+    
+    <!-- S3 -->
+    <rect x="100" y="1380" width="420" height="220" fill="white" stroke="#ed8936" stroke-width="2" rx="8"/>
+    <text x="310" y="1410" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">S3 Data Lake</text>
+    
+    <rect x="120" y="1425" width="380" height="75" fill="#fff5f5" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="310" y="1443" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Raw Events</text>
+    <text x="130" y="1459" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• Parquet columnar</text>
+    <text x="130" y="1472" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• Partition: year/mo/day/hr</text>
+    <text x="130" y="1485" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• Lifecycle: IA→Glacier</text>
+    <text x="130" y="1498" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• Error logs separate path</text>
+    
+    <rect x="120" y="1510" width="380" height="55" fill="#e6fffa" stroke="#319795" stroke-width="1" rx="5"/>
+    <text x="310" y="1528" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">Aggregated</text>
+    <text x="130" y="1544" font-family="Arial, sans-serif" font-size="9" fill="#234e52">/hourly-token-usage/</text>
+    <text x="130" y="1557" font-family="Arial, sans-serif" font-size="9" fill="#234e52">/tool-usage/ /error-patterns/</text>
+    
+    <text x="120" y="1582" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Storage: Multi-TB | Cost: $0.023/GB</text>
+    
+    <!-- Timestream -->
+    <rect x="560" y="1380" width="400" height="220" fill="white" stroke="#ed8936" stroke-width="2" rx="8"/>
+    <text x="760" y="1410" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">Timestream</text>
+    
+    <rect x="580" y="1425" width="360" height="80" fill="#e0e7ff" stroke="#667eea" stroke-width="1" rx="5"/>
+    <text x="760" y="1443" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Time-Series Metrics</text>
+    <text x="590" y="1459" font-family="Arial, sans-serif" font-size="9" fill="#434190">• TokenMetrics (365d)</text>
+    <text x="590" y="1472" font-family="Arial, sans-serif" font-size="9" fill="#434190">• LatencyMetrics (90d)</text>
+    <text x="590" y="1485" font-family="Arial, sans-serif" font-size="9" fill="#434190">• CostMetrics (730d)</text>
+    <text x="590" y="1498" font-family="Arial, sans-serif" font-size="9" fill="#434190">• ErrorRateMetrics (90d)</text>
+    
+    <rect x="580" y="1515" width="360" height="50" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="5"/>
+    <text x="760" y="1533" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">Performance</text>
+    <text x="590" y="1549" font-family="Arial, sans-serif" font-size="9" fill="#744210">Sub-second queries</text>
+    <text x="590" y="1560" font-family="Arial, sans-serif" font-size="9" fill="#744210">Auto downsampling</text>
+    
+    <text x="580" y="1582" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Memory: 24h | Cost: $0.50/GB ingested</text>
+    
+    <!-- OpenSearch -->
+    <rect x="1000" y="1380" width="400" height="220" fill="white" stroke="#ed8936" stroke-width="2" rx="8"/>
+    <text x="1200" y="1410" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">OpenSearch</text>
+    
+    <rect x="1020" y="1425" width="360" height="80" fill="#c6f6d5" stroke="#38a169" stroke-width="1" rx="5"/>
+    <text x="1200" y="1443" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Trace & Log Analysis</text>
+    <text x="1030" y="1459" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Full-text search</text>
+    <text x="1030" y="1472" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Execution traces</text>
+    <text x="1030" y="1485" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Error log aggregation</text>
+    <text x="1030" y="1498" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Distributed tracing</text>
+    
+    <rect x="1020" y="1515" width="360" height="50" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="5"/>
+    <text x="1200" y="1533" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">Cluster</text>
+    <text x="1030" y="1549" font-family="Arial, sans-serif" font-size="9" fill="#744210">3x r6g.xlarge.search</text>
+    <text x="1030" y="1560" font-family="Arial, sans-serif" font-size="9" fill="#744210">100GB EBS per node</text>
+    
+    <text x="1020" y="1582" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Hot-warm | Cost: ~$500/month</text>
+    
+    <!-- RDS -->
+    <rect x="1440" y="1380" width="390" height="220" fill="white" stroke="#ed8936" stroke-width="2" rx="8"/>
+    <text x="1635" y="1410" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">RDS Aurora</text>
+    
+    <rect x="1460" y="1425" width="350" height="80" fill="#fff5f5" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="1635" y="1443" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Metadata & Config</text>
+    <text x="1470" y="1459" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• agents (registry)</text>
+    <text x="1470" y="1472" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• mcp_servers (inventory)</text>
+    <text x="1470" y="1485" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• users, projects, configs</text>
+    <text x="1470" y="1498" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• alert_rules, thresholds</text>
+    
+    <rect x="1460" y="1515" width="350" height="50" fill="#e6fffa" stroke="#319795" stroke-width="1" rx="5"/>
+    <text x="1635" y="1533" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">Replication</text>
+    <text x="1470" y="1549" font-family="Arial, sans-serif" font-size="9" fill="#234e52">1 Writer + 2 Readers</text>
+    <text x="1470" y="1560" font-family="Arial, sans-serif" font-size="9" fill="#234e52">Auto backups (7 days)</text>
+    
+    <text x="1460" y="1582" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">db.r6g.large | Cost: ~$300/month</text>
+    
+    <!-- Error Store (NEW) -->
+    <rect x="1870" y="1380" width="180" height="220" fill="white" stroke="#ed8936" stroke-width="2" rx="8"/>
+    <circle cx="1960" cy="1395" r="12" fill="#fbbf24" stroke="#f59e0b" stroke-width="2"/>
+    <text x="1985" y="1400" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#f59e0b">NEW</text>
+    <text x="1960" y="1420" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#2d3748">Error Store</text>
+    
+    <rect x="1885" y="1430" width="150" height="140" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="5"/>
+    <text x="1960" y="1448" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#744210">DynamoDB</text>
+    <text x="1895" y="1465" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">Errors Table:</text>
+    <text x="1895" y="1478" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">• error_id (PK)</text>
+    <text x="1895" y="1491" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">• timestamp</text>
+    <text x="1895" y="1504" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">• stack_trace</text>
+    <text x="1895" y="1517" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">• context</text>
+    <text x="1895" y="1530" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">• similar_errors</text>
+    <text x="1895" y="1543" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">• llm_analysis</text>
+    <text x="1895" y="1556" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">GSI: agent-error</text>
+    <text x="1895" y="1569" font-family="Arial, sans-serif" font-size="8" fill="#7c2d12">TTL: 90 days</text>
+    
+    <text x="1885" y="1590" font-family="Arial, sans-serif" font-size="7" fill="#4a5568">Fast error lookup</text>
+  </g>
+  
+  <!-- Data Flow Arrow -->
+  <line x1="1300" y1="1640" x2="1300" y2="1690" stroke="#667eea" stroke-width="4" marker-end="url(#dataArrow)"/>
+  <text x="1350" y="1670" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#667eea">Process & Analyze</text>
+  
+  <!-- LAYER 4: PROCESSING LAYER WITH LLM INTELLIGENCE -->
+  <g id="layer4">
+    <rect x="50" y="1710" width="2500" height="420" fill="url(#layer4Gradient)" stroke="#9f7aea" stroke-width="3" rx="10"/>
+    <text x="100" y="1750" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#44337a">
+      Layer 4: Processing Layer (Real-time & Batch + LLM Intelligence)
+    </text>
+    
+    <!-- Real-time Processor -->
+    <rect x="100" y="1780" width="350" height="310" fill="white" stroke="#9f7aea" stroke-width="2" rx="8"/>
+    <text x="275" y="1810" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">Real-time Processor</text>
+    
+    <rect x="120" y="1825" width="310" height="100" fill="#e0e7ff" stroke="#667eea" stroke-width="1" rx="5"/>
+    <text x="275" y="1843" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Stream Processing</text>
+    <text x="130" y="1859" font-family="Arial, sans-serif" font-size="9" fill="#434190">• Update DynamoDB</text>
+    <text x="130" y="1872" font-family="Arial, sans-serif" font-size="9" fill="#434190">• Write to Timestream</text>
+    <text x="130" y="1885" font-family="Arial, sans-serif" font-size="9" fill="#434190">• Publish CloudWatch</text>
+    <text x="130" y="1898" font-family="Arial, sans-serif" font-size="9" fill="#434190">• Real-time aggregations</text>
+    <text x="130" y="1911" font-family="Arial, sans-serif" font-size="9" fill="#434190">• Error detection triggers</text>
+    
+    <rect x="120" y="1935" width="310" height="45" fill="#fed7d7" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="275" y="1953" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#c53030">Anomaly Check</text>
+    <text x="130" y="1970" font-family="Arial, sans-serif" font-size="9" fill="#c53030">If anomaly → Trigger investigation</text>
+    
+    <text x="120" y="2000" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Trigger: Kinesis (batch: 100)</text>
+    <text x="120" y="2015" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Latency: &lt;1 sec | Python 3.11</text>
+    
+    <line x1="275" y1="2090" x2="275" y2="2150" stroke="#f56565" stroke-width="3" marker-end="url(#alertArrow)"/>
+    <text x="285" y="2120" font-family="Arial, sans-serif" font-size="9" fill="#f56565">If error/anomaly</text>
+    
+    <!-- Glue ETL -->
+    <rect x="490" y="1780" width="380" height="310" fill="white" stroke="#9f7aea" stroke-width="2" rx="8"/>
+    <text x="680" y="1810" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">AWS Glue ETL</text>
+    
+    <rect x="510" y="1825" width="340" height="115" fill="#c6f6d5" stroke="#38a169" stroke-width="1" rx="5"/>
+    <text x="680" y="1843" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Batch Processing</text>
+    <text x="520" y="1859" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">Jobs:</text>
+    <text x="520" y="1872" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Hourly aggregations</text>
+    <text x="520" y="1885" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Token usage summaries</text>
+    <text x="520" y="1898" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Tool usage analytics</text>
+    <text x="520" y="1911" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Execution trace building</text>
+    <text x="520" y="1924" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Cost analysis reports</text>
+    <text x="520" y="1937" font-family="Arial, sans-serif" font-size="9" fill="#2f855a">• Error pattern detection</text>
+    
+    <rect x="510" y="1950" width="340" height="55" fill="#fff5f5" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="680" y="1968" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#c53030">Error Correlation</text>
+    <text x="520" y="1985" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• Group similar errors</text>
+    <text x="520" y="1998" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• Pattern recognition</text>
+    
+    <text x="510" y="2025" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Schedule: Hourly + Daily</text>
+    <text x="510" y="2040" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Workers: 10 DPU (Spark)</text>
+    <text x="510" y="2055" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Cost: ~$0.44/DPU-hour</text>
+    
+    <!-- Step Functions -->
+    <rect x="910" y="1780" width="360" height="310" fill="white" stroke="#9f7aea" stroke-width="2" rx="8"/>
+    <text x="1090" y="1810" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">Step Functions</text>
+    
+    <rect x="930" y="1825" width="320" height="115" fill="#fef5e7" stroke="#f6ad55" stroke-width="1" rx="5"/>
+    <text x="1090" y="1843" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Orchestration</text>
+    <text x="940" y="1859" font-family="Arial, sans-serif" font-size="9" fill="#744210">Pipeline:</text>
+    <text x="940" y="1872" font-family="Arial, sans-serif" font-size="9" fill="#744210">1. Process raw events</text>
+    <text x="940" y="1885" font-family="Arial, sans-serif" font-size="9" fill="#744210">2. Run Glue ETL jobs</text>
+    <text x="940" y="1898" font-family="Arial, sans-serif" font-size="9" fill="#744210">3. Anomaly detection</text>
+    <text x="940" y="1911" font-family="Arial, sans-serif" font-size="9" fill="#744210">4. LLM investigation (if needed)</text>
+    <text x="940" y="1924" font-family="Arial, sans-serif" font-size="9" fill="#744210">5. Update dashboards</text>
+    <text x="940" y="1937" font-family="Arial, sans-serif" font-size="9" fill="#744210">6. Send alerts</text>
+    
+    <rect x="930" y="1950" width="320" height="55" fill="#e6fffa" stroke="#319795" stroke-width="1" rx="5"/>
+    <text x="1090" y="1968" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#234e52">Error Handling</text>
+    <text x="940" y="1985" font-family="Arial, sans-serif" font-size="9" fill="#234e52">• Retry logic</text>
+    <text x="940" y="1998" font-family="Arial, sans-serif" font-size="9" fill="#234e52">• DLQ for failures</text>
+    
+    <text x="930" y="2025" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Trigger: EventBridge (daily)</text>
+    <text x="930" y="2040" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Duration: 15-30 min typical</text>
+    
+    <!-- NEW: LLM-Powered Anomaly Investigator -->
+    <rect x="1310" y="1780" width="450" height="310" fill="url(#llmGradient)" stroke="#d946ef" stroke-width="3" rx="8"/>
+    <circle cx="1535" cy="1795" r="15" fill="#fbbf24" stroke="#f59e0b" stroke-width="2"/>
+    <text x="1565" y="1801" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#f59e0b">NEW</text>
+    <text x="1535" y="1820" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#581c87">
+      LLM-Powered Investigation
+    </text>
+    
+    <rect x="1330" y="1835" width="410" height="135" fill="white" stroke="#a855f7" stroke-width="1" rx="5"/>
+    <text x="1535" y="1853" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#7e22ce">Automated Root Cause Analysis</text>
+    <text x="1340" y="1870" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Analyze error patterns & stack traces</text>
+    <text x="1340" y="1883" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Correlate across traces & logs (OpenSearch)</text>
+    <text x="1340" y="1896" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Identify similar past incidents</text>
+    <text x="1340" y="1909" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Generate human-readable explanation</text>
+    <text x="1340" y="1922" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Suggest remediation steps</text>
+    <text x="1340" y="1935" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Estimate impact & severity</text>
+    <text x="1340" y="1948" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Create incident summary (for alerts)</text>
+    <text x="1340" y="1961" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Link to relevant documentation</text>
+    
+    <rect x="1330" y="1980" width="410" height="75" fill="#fef3c7" stroke="#f59e0b" stroke-width="1" rx="5"/>
+    <text x="1535" y="1998" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#92400e">LLM Model: Claude Sonnet 4</text>
+    <text x="1340" y="2015" font-family="Arial, sans-serif" font-size="8" fill="#78350f">Prompt Engineering:</text>
+    <text x="1340" y="2028" font-family="Arial, sans-serif" font-size="8" fill="#78350f">• Execution trace + error context</text>
+    <text x="1340" y="2041" font-family="Arial, sans-serif" font-size="8" fill="#78350f">• Historical similar errors</text>
+    <text x="1340" y="2054" font-family="Arial, sans-serif" font-size="8" fill="#78350f">• System documentation</text>
+    
+    <text x="1330" y="2075" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Trigger: High-severity errors/anomalies</text>
+    
+    <line x1="1535" y1="2090" x2="1535" y2="2150" stroke="#d946ef" stroke-width="3" marker-end="url(#llmArrow)"/>
+    <text x="1545" y="2120" font-family="Arial, sans-serif" font-size="9" fill="#d946ef">Analysis results</text>
+    
+    <!-- NEW: Anomaly Detection Lambda (Enhanced) -->
+    <rect x="1800" y="1780" width="450" height="310" fill="white" stroke="#9f7aea" stroke-width="2" rx="8"/>
+    <circle cx="2025" cy="1795" r="15" fill="#fbbf24" stroke="#f59e0b" stroke-width="2"/>
+    <text x="2055" y="1801" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#f59e0b">ENHANCED</text>
+    <text x="2025" y="1820" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#2d3748">
+      Anomaly Detection
+    </text>
+    
+    <rect x="1820" y="1835" width="410" height="135" fill="#fed7d7" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="2025" y="1853" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#c53030">ML-based Detection</text>
+    <text x="1830" y="1870" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">Monitors:</text>
+    <text x="1830" y="1883" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• Token usage spikes (3σ)</text>
+    <text x="1830" y="1896" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• High error rates (&gt;10%)</text>
+    <text x="1830" y="1909" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• Latency degradation (p95)</text>
+    <text x="1830" y="1922" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• Cost anomalies (2x baseline)</text>
+    <text x="1830" y="1935" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• MCP connection failures</text>
+    <text x="1830" y="1948" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• Unusual error patterns (NEW)</text>
+    <text x="1830" y="1961" font-family="Arial, sans-serif" font-size="9" fill="#991b1b">• Agent behavior changes (NEW)</text>
+    
+    <rect x="1820" y="1980" width="410" height="75" fill="#e0e7ff" stroke="#667eea" stroke-width="1" rx="5"/>
+    <text x="2025" y="1998" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#3730a3">Smart Alerting</text>
+    <text x="1830" y="2015" font-family="Arial, sans-serif" font-size="8" fill="#4338ca">• Severity classification (critical/warn/info)</text>
+    <text x="1830" y="2028" font-family="Arial, sans-serif" font-size="8" fill="#4338ca">• Alert deduplication (24h window)</text>
+    <text x="1830" y="2041" font-family="Arial, sans-serif" font-size="8" fill="#4338ca">• Smart routing by team/severity</text>
+    <text x="1830" y="2054" font-family="Arial, sans-serif" font-size="8" fill="#4338ca">• Trigger LLM investigation for critical</text>
+    
+    <text x="1820" y="2075" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Algorithm: Z-score + IQR + ML patterns</text>
+    
+    <line x1="2025" y1="2090" x2="2025" y2="2150" stroke="#f56565" stroke-width="3" marker-end="url(#alertArrow)"/>
+    <text x="2035" y="2120" font-family="Arial, sans-serif" font-size="9" fill="#f56565">Alerts</text>
+  </g>
+  
+  <!-- NEW: NOTIFICATION & INVESTIGATION LAYER -->
+  <g id="notification-layer">
+    <rect x="50" y="2150" width="2500" height="280" fill="#fff5f5" stroke="#f56565" stroke-width="3" rx="10"/>
+    <circle cx="275" cy="2175" r="18" fill="#fbbf24" stroke="#f59e0b" stroke-width="3"/>
+    <text x="305" y="2182" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#f59e0b">NEW LAYER</text>
+    <text x="100" y="2205" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#7f1d1d">
+      Notification & Investigation Layer
+    </text>
+    
+    <!-- SNS Topic Router -->
+    <rect x="100" y="2230" width="380" height="160" fill="white" stroke="#f56565" stroke-width="2" rx="8"/>
+    <text x="290" y="2258" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#2d3748">SNS Topic Router</text>
+    
+    <rect x="120" y="2273" width="340" height="95" fill="#fed7d7" stroke="#fc8181" stroke-width="1" rx="5"/>
+    <text x="290" y="2290" font-family="Arial, sans-serif" font-size="11" text-anchor="middle">Smart Routing</text>
+    <text x="130" y="2306" font-family="Arial, sans-serif" font-size="9" fill="#c53030">Topics:</text>
+    <text x="130" y="2319" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• genai-alerts-critical (P1)</text>
+    <text x="130" y="2332" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• genai-alerts-warning (P2)</text>
+    <text x="130" y="2345" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• genai-alerts-info (P3)</text>
+    <text x="130" y="2358" font-family="Arial, sans-serif" font-size="9" fill="#c53030">• genai-investigation-results</text>
+    
+    <text x="120" y="2385" font-family="Arial, sans-serif" font-size="8" fill="#4a5568">Filter: Severity + Agent + Team</text>
+    
+    <line x1="480" y1="2300" x2="540" y2="2300" stroke="#f56565" stroke-width="3" marker-end="url(#alertArrow)"/>
+    
+    <!-- Slack Integration -->
+    <rect x="540" y="2230" width="220" height="160" fill="white" stroke="#f56565" stroke-width="2" rx="8"/>
+    <text x="650" y="2258" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#2d3748">Slack</text>
+    
+    <rect x="555" y="2270" width="190" height="95" fill="#e0e7ff" stroke="#667eea" stroke-width="1" rx="5"/>
+    <text x="650" y="2286" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Channels:</text>
+    <text x="565" y="2302" font-family="Arial, sans-serif" font-size="8" fill="#434190">#genai-critical-alerts</text>
+    <text x="565" y="2315" font-family="Arial, sans-serif" font-size="8" fill="#434190">#genai-warnings</text>
+    <text x="565" y="2328" font-family="Arial, sans-serif" font-size="8" fill="#434190">#genai-monitoring</text>
+    <text x="565" y="2343" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#1e40af">Rich Messages:</text>
+    <text x="565" y="2356" font-family="Arial, sans-serif" font-size="8" fill="#434190">• LLM summary</text>
+    
+    <text x="555" y="2380" font-family="Arial, sans-serif" font-size="7" fill="#4a5568">Webhook integration</text>
+    
+    <!-- PagerDuty -->
+    <rect x="800" y="2230" width="220" height="160" fill="white" stroke="#f56565" stroke-width="2" rx="8"/>
+    <text x="910" y="2258" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#2d3748">PagerDuty</text>
+    
+    <rect x="815" y="2270" width="190" height="95" fill="#fef3c7" stroke="#f59e0b" stroke-width="1" rx="5"/>
+    <text x="910" y="2286" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">On-Call:</text>
+    <text x="825" y="2302" font-family="Arial, sans-serif" font-size="8" fill="#92400e">P1: Immediate page</text>
+    <text x="825" y="2315" font-family="Arial, sans-serif" font-size="8" fill="#92400e">P2: 15min delay</text>
+    <text x="825" y="2328" font-family="Arial, sans-serif" font-size="8" fill="#92400e">P3: No page</text>
+    <text x="825" y="2343" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#78350f">Incident:</text>
+    <text x="825" y="2356" font-family="Arial, sans-serif" font-size="8" fill="#92400e">• Auto-create</text>
+    
+    <text x="815" y="2380" font-family="Arial, sans-serif" font-size="7" fill="#4a5568">API integration</text>
+    
+    <!-- MS Teams -->
+    <rect x="1060" y="2230" width="220" height="160" fill="white" stroke="#f56565" stroke-width="2" rx="8"/>
+    <text x="1170" y="2258" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#2d3748">MS Teams</text>
+    
+    <rect x="1075" y="2270" width="190" height="95" fill="#dbeafe" stroke="#3b82f6" stroke-width="1" rx="5"/>
+    <text x="1170" y="2286" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Teams:</text>
+    <text x="1085" y="2302" font-family="Arial, sans-serif" font-size="8" fill="#1e3a8a">GenAI Platform Alerts</text>
+    <text x="1085" y="2315" font-family="Arial, sans-serif" font-size="8" fill="#1e3a8a">Engineering Team</text>
+    <text x="1085" y="2328" font-family="Arial, sans-serif" font-size="8" fill="#1e3a8a">Ops Team</text>
+    <text x="1085" y="2343" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#1e40af">Adaptive Cards</text>
+    <text x="1085" y="2356" font-family="Arial, sans-serif" font-size="8" fill="#1e3a8a">Interactive buttons</text>
+    
+    <text x="1075" y="2380" font-family="Arial, sans-serif" font-size="7" fill="#4a5568">Webhook connector</text>
+    
+    <!-- Email (SES) -->
+    <rect x="1320" y="2230" width="220" height="160" fill="white" stroke="#f56565" stroke-width="2" rx="8"/>
+    <text x="1430" y="2258" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#2d3748">Email (SES)</text>
+    
+    <rect x="1335" y="2270" width="190" height="95" fill="#dcfce7" stroke="#16a34a" stroke-width="1" rx="5"/>
+    <text x="1430" y="2286" font-family="Arial, sans-serif" font-size="10" text-anchor="middle">Recipients:</text>
+    <text x="1345" y="2302" font-family="Arial, sans-serif" font-size="8" fill="#15803d">Team distribution lists</text>
+    <text x="1345" y="2315" font-family="Arial, sans-serif" font-size="8" fill="#15803d">Individual escalations</text>
+    <text x="1345" y="2328" font-family="Arial, sans-serif" font-size="8" fill="#15803d">Executive summaries</text>
+    <text x="1345" y="2343" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#166534">HTML Format:</text>
+    <text x="1345" y="2356" font-family="Arial, sans-serif" font-size="8" fill="#15803d">Rich investigation report</text>
+    
+    <text x="1335" y="2380" font-family="Arial, sans-serif" font-size="7" fill="#4a5568">AWS SES</text>
+    
+    <!-- Investigation Dashboard -->
+    <rect x="1580" y="2230" width="460" height="160" fill="url(#llmGradient)" stroke="#d946ef" stroke-width="2" rx="8"/>
+    <text x="1810" y="2258" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#581c87">Investigation Dashboard</text>
+    
+    <rect x="1600" y="2273" width="420" height="95" fill="white" stroke="#a855f7" stroke-width="1" rx="5"/>
+    <text x="1810" y="2290" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#7e22ce">LLM-Generated Insights</text>
+    <text x="1610" y="2306" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Root cause analysis summary</text>
+    <text x="1610" y="2319" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Similar past incidents (with resolutions)</text>
+    <text x="1610" y="2332" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Suggested remediation steps</text>
+    <text x="1610" y="2345" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Impact estimation (affected users/agents)</text>
+    <text x="1610" y="2358" font-family="Arial, sans-serif" font-size="9" fill="#6b21a8">• Links to traces, logs, documentation</text>
+    
+    <text x="1600" y="2380" font-family="Arial, sans-serif" font-size="7" fill="#4a5568">Accessible via web portal & API</text>
+  </g>
+  
+  <!-- Footer with Key Additions -->
+  <rect x="0" y="3300" width="2600" height="300" fill="#2d3748"/>
+  
+  <text x="1300" y="3350" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="white" text-anchor="middle">
+    🎉 New Features Summary
+  </text>
+  
+  <g id="new-features">
+    <rect x="100" y="3380" width="550" height="170" fill="#44337a" stroke="#9f7aea" stroke-width="2" rx="8"/>
+    <text x="375" y="3410" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#e9d5ff" text-anchor="middle">
+      1. LLM-Powered Intelligence
+    </text>
+    <text x="120" y="3435" font-family="Arial, sans-serif" font-size="11" fill="#e9d5ff">✓ Automated root cause analysis</text>
+    <text x="120" y="3453" font-family="Arial, sans-serif" font-size="11" fill="#e9d5ff">✓ Human-readable incident summaries</text>
+    <text x="120" y="3471" font-family="Arial, sans-serif" font-size="11" fill="#e9d5ff">✓ Smart remediation suggestions</text>
+    <text x="120" y="3489" font-family="Arial, sans-serif" font-size="11" fill="#e9d5ff">✓ Similar incident detection</text>
+    <text x="120" y="3507" font-family="Arial, sans-serif" font-size="11" fill="#e9d5ff">✓ Configuration assistance in portal</text>
+    <text x="120" y="3525" font-family="Arial, sans-serif" font-size="11" fill="#e9d5ff">✓ Natural language query support</text>
+    
+    <rect x="700" y="3380" width="550" height="170" fill="#7f1d1d" stroke="#f56565" stroke-width="2" rx="8"/>
+    <text x="975" y="3410" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#fecaca" text-anchor="middle">
+      2. Smart Notification Platform
+    </text>
+    <text x="720" y="3435" font-family="Arial, sans-serif" font-size="11" fill="#fecaca">✓ Multi-channel integration (Slack, PagerDuty, Teams)</text>
+    <text x="720" y="3453" font-family="Arial, sans-serif" font-size="11" fill="#fecaca">✓ Severity-based routing</text>
+    <text x="720" y="3471" font-family="Arial, sans-serif" font-size="11" fill="#fecaca">✓ Rich formatted messages with context</text>
+    <text x="720" y="3489" font-family="Arial, sans-serif" font-size="11" fill="#fecaca">✓ Alert deduplication (24h window)</text>
+    <text x="720" y="3507" font-family="Arial, sans-serif" font-size="11" fill="#fecaca">✓ Team-specific alert routing</text>
+    <text x="720" y="3525" font-family="Arial, sans-serif" font-size="11" fill="#fecaca">✓ Investigation results distribution</text>
+    
+    <rect x="1300" y="3380" width="550" height="170" fill="#164e63" stroke="#06b6d4" stroke-width="2" rx="8"/>
+    <text x="1575" y="3410" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#cffafe" text-anchor="middle">
+      3. Registration Portal
+    </text>
+    <text x="1320" y="3435" font-family="Arial, sans-serif" font-size="11" fill="#cffafe">✓ Self-service agent/MCP registration</text>
+    <text x="1320" y="3453" font-family="Arial, sans-serif" font-size="11" fill="#cffafe">✓ API key generation & management</text>
+    <text x="1320" y="3471" font-family="Arial, sans-serif" font-size="11" fill="#cffafe">✓ LLM configuration wizard</text>
+    <text x="1320" y="3489" font-family="Arial, sans-serif" font-size="11" fill="#cffafe">✓ Health check validation</text>
+    <text x="1320" y="3507" font-family="Arial, sans-serif" font-size="11" fill="#cffafe">✓ Team & access management (RBAC)</text>
+    <text x="1320" y="3525" font-family="Arial, sans-serif" font-size="11" fill="#cffafe">✓ SDK download center & testing tools</text>
+    
+    <rect x="1900" y="3380" width="550" height="170" fill="#065f46" stroke="#10b981" stroke-width="2" rx="8"/>
+    <text x="2175" y="3410" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#d1fae5" text-anchor="middle">
+      4. Enhanced Error Investigation
+    </text>
+    <text x="1920" y="3435" font-family="Arial, sans-serif" font-size="11" fill="#d1fae5">✓ Dedicated error storage (DynamoDB)</text>
+    <text x="1920" y="3453" font-family="Arial, sans-serif" font-size="11" fill="#d1fae5">✓ Error pattern correlation</text>
+    <text x="1920" y="3471" font-family="Arial, sans-serif" font-size="11" fill="#d1fae5">✓ Stack trace analysis</text>
+    <text x="1920" y="3489" font-family="Arial, sans-serif" font-size="11" fill="#d1fae5">✓ Anomaly behavior detection</text>
+    <text x="1920" y="3507" font-family="Arial, sans-serif" font-size="11" fill="#d1fae5">✓ Investigation dashboard with insights</text>
+    <text x="1920" y="3525" font-family="Arial, sans-serif" font-size="11" fill="#d1fae5">✓ Automated incident documentation</text>
+  </g>
+</svg>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <strong>💡 Tip:</strong> Use the zoom controls above, or scroll within the diagram to navigate. Click and drag to pan around.
+        </div>
+
+        <div class="download-section">
+            <div class="info-badge">
+                <svg fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z"/></svg>
+                Cost: $2,270/month
+            </div>
+            <div class="info-badge">
+                <svg fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"/></svg>
+                75% MTTR Reduction
+            </div>
+            <div class="info-badge">
+                <svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/></svg>
+                AI-Powered Analysis
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentZoom = 1;
+        const zoomStep = 0.2;
+        const minZoom = 0.2;
+        const maxZoom = 3;
+
+        function updateZoom(newZoom) {
+            currentZoom = Math.max(minZoom, Math.min(maxZoom, newZoom));
+            const wrapper = document.getElementById('svgWrapper');
+            wrapper.style.transform = `scale(${currentZoom})`;
+            document.getElementById('zoomLevel').textContent = Math.round(currentZoom * 100) + '%';
+        }
+
+        function zoomIn() {
+            updateZoom(currentZoom + zoomStep);
+        }
+
+        function zoomOut() {
+            updateZoom(currentZoom - zoomStep);
+        }
+
+        function resetZoom() {
+            updateZoom(1);
+            document.getElementById('svgContainer').scrollTop = 0;
+            document.getElementById('svgContainer').scrollLeft = 0;
+        }
+
+        function fitToScreen() {
+            const container = document.getElementById('svgContainer');
+            const svg = document.querySelector('svg');
+            const containerWidth = container.clientWidth;
+            const svgWidth = svg.getAttribute('width');
+            const scale = containerWidth / svgWidth * 0.95;
+            updateZoom(scale);
+            container.scrollTop = 0;
+            container.scrollLeft = 0;
+        }
+
+        // Enable panning with mouse
+        let isPanning = false;
+        let startX, startY, scrollLeft, scrollTop;
+
+        const container = document.getElementById('svgContainer');
+
+        container.addEventListener('mousedown', (e) => {
+            isPanning = true;
+            container.style.cursor = 'grabbing';
+            startX = e.pageX - container.offsetLeft;
+            startY = e.pageY - container.offsetTop;
+            scrollLeft = container.scrollLeft;
+            scrollTop = container.scrollTop;
+        });
+
+        container.addEventListener('mouseleave', () => {
+            isPanning = false;
+            container.style.cursor = 'grab';
+        });
+
+        container.addEventListener('mouseup', () => {
+            isPanning = false;
+            container.style.cursor = 'grab';
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            e.preventDefault();
+            const x = e.pageX - container.offsetLeft;
+            const y = e.pageY - container.offsetTop;
+            const walkX = (x - startX) * 2;
+            const walkY = (y - startY) * 2;
+            container.scrollLeft = scrollLeft - walkX;
+            container.scrollTop = scrollTop - walkY;
+        });
+
+        container.style.cursor = 'grab';
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                zoomIn();
+            } else if (e.key === '-' || e.key === '_') {
+                e.preventDefault();
+                zoomOut();
+            } else if (e.key === '0') {
+                e.preventDefault();
+                resetZoom();
+            } else if (e.key === 'f' || e.key === 'F') {
+                e.preventDefault();
+                fitToScreen();
+            }
+        });
+
+        // Initial fit to screen on load
+        window.addEventListener('load', () => {
+            setTimeout(fitToScreen, 100);
+        });
+    </script>
+</body>
+</html>

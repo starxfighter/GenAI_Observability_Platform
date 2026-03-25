@@ -1,0 +1,417 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - Batch Processing (Step Functions + Glue ETL)'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+  ProjectName:
+    Type: String
+    Default: genai-observability
+  S3BucketName:
+    Type: String
+    Description: S3 bucket for cold storage data
+  RDSEndpoint:
+    Type: String
+    Description: RDS Aurora endpoint for analytics
+  RDSSecretArn:
+    Type: String
+    Description: Secrets Manager ARN for RDS credentials
+
+Resources:
+  # IAM Role for Glue Jobs
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-glue-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: GlueJobPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref RDSSecretArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # IAM Role for Step Functions
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-stepfunctions-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                  - glue:GetJobRun
+                  - glue:GetJobRuns
+                  - glue:BatchStopJobRun
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  # Glue Database
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub '${ProjectName}_${Environment}_db'
+        Description: 'GenAI Observability Platform Analytics Database'
+
+  # Glue Job: Token Aggregation
+  TokenAggregationJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-token-aggregation'
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/glue-scripts/token_aggregation.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--S3_BUCKET': !Ref S3BucketName
+        '--RDS_ENDPOINT': !Ref RDSEndpoint
+        '--RDS_SECRET_ARN': !Ref RDSSecretArn
+        '--ENVIRONMENT': !Ref Environment
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 60
+      MaxRetries: 1
+
+  # Glue Job: Tool Analytics
+  ToolAnalyticsJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-tool-analytics'
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/glue-scripts/tool_analytics.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--S3_BUCKET': !Ref S3BucketName
+        '--RDS_ENDPOINT': !Ref RDSEndpoint
+        '--RDS_SECRET_ARN': !Ref RDSSecretArn
+        '--ENVIRONMENT': !Ref Environment
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 60
+      MaxRetries: 1
+
+  # Glue Job: Cost Analysis
+  CostAnalysisJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-cost-analysis'
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/glue-scripts/cost_analysis.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--S3_BUCKET': !Ref S3BucketName
+        '--RDS_ENDPOINT': !Ref RDSEndpoint
+        '--RDS_SECRET_ARN': !Ref RDSSecretArn
+        '--ENVIRONMENT': !Ref Environment
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 60
+      MaxRetries: 1
+
+  # Glue Job: Error Pattern Aggregation
+  ErrorPatternJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-error-patterns'
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/glue-scripts/error_patterns.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--S3_BUCKET': !Ref S3BucketName
+        '--RDS_ENDPOINT': !Ref RDSEndpoint
+        '--RDS_SECRET_ARN': !Ref RDSSecretArn
+        '--ENVIRONMENT': !Ref Environment
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 60
+      MaxRetries: 1
+
+  # Glue Job: Trace Reconstruction
+  TraceReconstructionJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-trace-reconstruction'
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${S3BucketName}/glue-scripts/trace_reconstruction.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--S3_BUCKET': !Ref S3BucketName
+        '--RDS_ENDPOINT': !Ref RDSEndpoint
+        '--RDS_SECRET_ARN': !Ref RDSSecretArn
+        '--ENVIRONMENT': !Ref Environment
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 90
+      MaxRetries: 1
+
+  # Step Functions State Machine - Daily Pipeline
+  DailyPipelineStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${ProjectName}-${Environment}-daily-pipeline'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StepFunctionsLogGroup.Arn
+      Definition:
+        Comment: 'Daily batch processing pipeline for GenAI Observability - runs at 2 AM UTC'
+        StartAt: PrepareExecution
+        States:
+          PrepareExecution:
+            Type: Pass
+            Parameters:
+              execution_date.$: $$.Execution.StartTime
+              bucket: !Ref S3BucketName
+            ResultPath: $.config
+            Next: RunETLJobsInParallel
+
+          RunETLJobsInParallel:
+            Type: Parallel
+            Branches:
+              - StartAt: StartTokenAggregation
+                States:
+                  StartTokenAggregation:
+                    Type: Task
+                    Resource: arn:aws:states:::glue:startJobRun.sync
+                    Parameters:
+                      JobName: !Ref TokenAggregationJob
+                      Arguments:
+                        '--EXECUTION_DATE.$': $.config.execution_date
+                    ResultPath: $.token_aggregation_result
+                    End: true
+              - StartAt: StartToolAnalytics
+                States:
+                  StartToolAnalytics:
+                    Type: Task
+                    Resource: arn:aws:states:::glue:startJobRun.sync
+                    Parameters:
+                      JobName: !Ref ToolAnalyticsJob
+                      Arguments:
+                        '--EXECUTION_DATE.$': $.config.execution_date
+                    ResultPath: $.tool_analytics_result
+                    End: true
+              - StartAt: StartCostAnalysis
+                States:
+                  StartCostAnalysis:
+                    Type: Task
+                    Resource: arn:aws:states:::glue:startJobRun.sync
+                    Parameters:
+                      JobName: !Ref CostAnalysisJob
+                      Arguments:
+                        '--EXECUTION_DATE.$': $.config.execution_date
+                    ResultPath: $.cost_analysis_result
+                    End: true
+              - StartAt: StartErrorPatterns
+                States:
+                  StartErrorPatterns:
+                    Type: Task
+                    Resource: arn:aws:states:::glue:startJobRun.sync
+                    Parameters:
+                      JobName: !Ref ErrorPatternJob
+                      Arguments:
+                        '--EXECUTION_DATE.$': $.config.execution_date
+                    ResultPath: $.error_patterns_result
+                    End: true
+              - StartAt: StartTraceReconstruction
+                States:
+                  StartTraceReconstruction:
+                    Type: Task
+                    Resource: arn:aws:states:::glue:startJobRun.sync
+                    Parameters:
+                      JobName: !Ref TraceReconstructionJob
+                      Arguments:
+                        '--EXECUTION_DATE.$': $.config.execution_date
+                    ResultPath: $.trace_reconstruction_result
+                    End: true
+            ResultPath: $.etl_results
+            Catch:
+              - ErrorEquals: ['States.ALL']
+                ResultPath: $.error
+                Next: NotifyFailure
+            Next: AggregateResults
+
+          AggregateResults:
+            Type: Pass
+            Parameters:
+              status: SUCCESS
+              execution_date.$: $.config.execution_date
+              jobs_completed: 5
+            ResultPath: $.summary
+            Next: NotifySuccess
+
+          NotifySuccess:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: !Ref PipelineNotificationTopic
+              Message:
+                daily_pipeline_completed:
+                  status: SUCCESS
+                  execution_date.$: $.config.execution_date
+              Subject: 'GenAI Observability - Daily Pipeline Completed'
+            End: true
+
+          NotifyFailure:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: !Ref PipelineNotificationTopic
+              Message:
+                daily_pipeline_failed:
+                  status: FAILED
+                  error.$: $.error
+              Subject: 'GenAI Observability - Daily Pipeline FAILED'
+            End: true
+
+  # CloudWatch Log Group for Step Functions
+  StepFunctionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/stepfunctions/${ProjectName}-${Environment}-daily-pipeline'
+      RetentionInDays: 30
+
+  # SNS Topic for Pipeline Notifications
+  PipelineNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Environment}-pipeline-notifications'
+
+  # EventBridge Rule for Daily Schedule (2 AM UTC)
+  DailyScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-daily-pipeline-trigger'
+      Description: 'Triggers the daily batch processing pipeline at 2 AM UTC'
+      ScheduleExpression: 'cron(0 2 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: DailyPipelineTarget
+          Arn: !GetAtt DailyPipelineStateMachine.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+  # IAM Role for EventBridge
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-eventbridge-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStepFunctions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !GetAtt DailyPipelineStateMachine.Arn
+
+Outputs:
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-glue-database'
+
+  DailyPipelineStateMachineArn:
+    Value: !GetAtt DailyPipelineStateMachine.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-daily-pipeline-arn'
+
+  PipelineNotificationTopicArn:
+    Value: !Ref PipelineNotificationTopic
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-pipeline-notifications-arn'

@@ -1,0 +1,471 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GenAI Observability Platform - WebSocket API for Real-time Updates'
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+  ProjectName:
+    Type: String
+    Default: genai-observability
+  DynamoDBTableName:
+    Type: String
+    Description: DynamoDB table for connection management
+  CognitoUserPoolArn:
+    Type: String
+    Description: Cognito User Pool ARN for authorization
+
+Resources:
+  # WebSocket API
+  WebSocketAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-websocket'
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: '$request.body.action'
+      Tags:
+        Environment: !Ref Environment
+        Project: !Ref ProjectName
+
+  # DynamoDB Table for Connection Management
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-ws-connections'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: subscriptionType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: SubscriptionTypeIndex
+          KeySchema:
+            - AttributeName: subscriptionType
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IAM Role for WebSocket Lambdas
+  WebSocketLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-websocket-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: WebSocketPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt ConnectionsTable.Arn
+                  - !Sub '${ConnectionsTable.Arn}/index/*'
+              - Effect: Allow
+                Action:
+                  - execute-api:ManageConnections
+                Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*'
+
+  # Connect Lambda
+  ConnectFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ws-connect'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from datetime import datetime, timedelta
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['CONNECTIONS_TABLE'])
+
+          def handler(event, context):
+              connection_id = event['requestContext']['connectionId']
+
+              # Extract user info from authorizer context if available
+              authorizer_context = event.get('requestContext', {}).get('authorizer', {})
+              user_id = authorizer_context.get('userId', 'anonymous')
+
+              # Calculate TTL (24 hours from now)
+              ttl = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
+
+              # Store connection
+              table.put_item(
+                  Item={
+                      'connectionId': connection_id,
+                      'userId': user_id,
+                      'subscriptionType': 'none',
+                      'connectedAt': datetime.utcnow().isoformat(),
+                      'ttl': ttl
+                  }
+              )
+
+              print(f"Connected: {connection_id} for user {user_id}")
+
+              return {'statusCode': 200}
+
+  # Disconnect Lambda
+  DisconnectFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ws-disconnect'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['CONNECTIONS_TABLE'])
+
+          def handler(event, context):
+              connection_id = event['requestContext']['connectionId']
+
+              # Remove connection
+              table.delete_item(
+                  Key={'connectionId': connection_id}
+              )
+
+              print(f"Disconnected: {connection_id}")
+
+              return {'statusCode': 200}
+
+  # Subscribe Lambda
+  SubscribeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ws-subscribe'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['CONNECTIONS_TABLE'])
+
+          VALID_SUBSCRIPTIONS = ['alerts', 'traces', 'metrics', 'agent_status']
+
+          def handler(event, context):
+              connection_id = event['requestContext']['connectionId']
+              body = json.loads(event.get('body', '{}'))
+
+              subscription_type = body.get('subscriptionType')
+              agent_id = body.get('agentId')  # Optional filter
+
+              if subscription_type not in VALID_SUBSCRIPTIONS:
+                  return {
+                      'statusCode': 400,
+                      'body': json.dumps({'error': f'Invalid subscription type. Valid: {VALID_SUBSCRIPTIONS}'})
+                  }
+
+              # Update connection with subscription
+              update_expr = 'SET subscriptionType = :st'
+              expr_values = {':st': subscription_type}
+
+              if agent_id:
+                  update_expr += ', agentFilter = :af'
+                  expr_values[':af'] = agent_id
+
+              table.update_item(
+                  Key={'connectionId': connection_id},
+                  UpdateExpression=update_expr,
+                  ExpressionAttributeValues=expr_values
+              )
+
+              print(f"Subscribed {connection_id} to {subscription_type}")
+
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({'message': f'Subscribed to {subscription_type}'})
+              }
+
+  # Default Route Lambda (for unknown actions)
+  DefaultFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ws-default'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'message': 'Unknown action',
+                      'validActions': ['subscribe', 'unsubscribe', 'ping']
+                  })
+              }
+
+  # Broadcast Lambda (invoked by other services to push messages)
+  BroadcastFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-ws-broadcast'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt WebSocketLambdaRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref ConnectionsTable
+          WEBSOCKET_ENDPOINT: !Sub 'https://${WebSocketAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from boto3.dynamodb.conditions import Key
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['CONNECTIONS_TABLE'])
+
+          def handler(event, context):
+              """
+              Broadcast messages to subscribed WebSocket connections.
+
+              Event format:
+              {
+                  "subscriptionType": "alerts",  # Required
+                  "message": {...},               # Required: The message to send
+                  "agentId": "agent-123"         # Optional: Filter to specific agent
+              }
+              """
+              subscription_type = event.get('subscriptionType')
+              message = event.get('message')
+              agent_filter = event.get('agentId')
+
+              if not subscription_type or not message:
+                  return {'statusCode': 400, 'error': 'Missing subscriptionType or message'}
+
+              # Query connections by subscription type
+              response = table.query(
+                  IndexName='SubscriptionTypeIndex',
+                  KeyConditionExpression=Key('subscriptionType').eq(subscription_type)
+              )
+
+              connections = response.get('Items', [])
+
+              # Filter by agent if specified
+              if agent_filter:
+                  connections = [
+                      c for c in connections
+                      if c.get('agentFilter') is None or c.get('agentFilter') == agent_filter
+                  ]
+
+              # Initialize API Gateway Management API client
+              endpoint_url = os.environ['WEBSOCKET_ENDPOINT']
+              api_client = boto3.client(
+                  'apigatewaymanagementapi',
+                  endpoint_url=endpoint_url
+              )
+
+              # Send to all matching connections
+              sent_count = 0
+              failed_connections = []
+
+              for connection in connections:
+                  connection_id = connection['connectionId']
+                  try:
+                      api_client.post_to_connection(
+                          ConnectionId=connection_id,
+                          Data=json.dumps(message).encode('utf-8')
+                      )
+                      sent_count += 1
+                  except api_client.exceptions.GoneException:
+                      # Connection is stale, remove it
+                      table.delete_item(Key={'connectionId': connection_id})
+                      failed_connections.append(connection_id)
+                  except Exception as e:
+                      print(f"Error sending to {connection_id}: {str(e)}")
+                      failed_connections.append(connection_id)
+
+              return {
+                  'statusCode': 200,
+                  'sent': sent_count,
+                  'failed': len(failed_connections)
+              }
+
+  # Lambda Permissions
+  ConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ConnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$connect'
+
+  DisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DisconnectFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$disconnect'
+
+  SubscribePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SubscribeFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/subscribe'
+
+  DefaultPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DefaultFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*/$default'
+
+  # Integrations
+  ConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectFunction.Arn}/invocations'
+
+  DisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectFunction.Arn}/invocations'
+
+  SubscribeIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SubscribeFunction.Arn}/invocations'
+
+  DefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DefaultFunction.Arn}/invocations'
+
+  # Routes
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: '$connect'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${ConnectIntegration}'
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: '$disconnect'
+      Target: !Sub 'integrations/${DisconnectIntegration}'
+
+  SubscribeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: 'subscribe'
+      Target: !Sub 'integrations/${SubscribeIntegration}'
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${DefaultIntegration}'
+
+  # Stage
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      StageName: !Ref Environment
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 500
+        ThrottlingRateLimit: 1000
+
+Outputs:
+  WebSocketAPIId:
+    Value: !Ref WebSocketAPI
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-websocket-api-id'
+
+  WebSocketURL:
+    Value: !Sub 'wss://${WebSocketAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-websocket-url'
+
+  ConnectionsTableName:
+    Value: !Ref ConnectionsTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ws-connections-table'
+
+  BroadcastFunctionArn:
+    Value: !GetAtt BroadcastFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ws-broadcast-arn'
